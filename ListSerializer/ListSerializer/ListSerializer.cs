@@ -145,7 +145,7 @@ namespace ListSerializer
                     var data =Encoding.UTF8.GetString(bufferData);
                     current.Data = data;
 
-                    var bufferRandomLink = new byte[length];
+                    var bufferRandomLink = new byte[4];
                     if (s.Read(bufferRandomLink, 0, bufferRandomLink.Length) <= 0)
                     {
                         throw new ArgumentException();
