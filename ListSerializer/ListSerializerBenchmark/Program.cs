@@ -7,9 +7,6 @@ namespace ListSerializerBenchmark
         static void Main(string[] args)
         {
             BenchmarkRunner.Run<ListSerializerJob>();
-            //var n = new ListSerializerJob();
-            //n.Setup();
-            //n.DeepCopy();
         }
     }
 }
