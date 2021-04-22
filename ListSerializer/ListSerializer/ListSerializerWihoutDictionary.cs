@@ -8,7 +8,11 @@ using System.Threading.Tasks;
 
 namespace ListSerializer
 {
-    public class ListSerializer : IListSerializer
+    /// <summary>
+    /// Serializator ListNode
+    /// </summary>
+    /// <remarks>Serialization wihout dictionary. This version serializator using list</remarks>
+    public class ListSerializerWihoutDictionary : IListSerializer
     {
         private const int NullReference = -1;
 
@@ -19,7 +23,7 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
                 {
-                    var dic = new Dictionary<ListNode, List<(int LinkId, ListNode Node)>>();
+                    var list = new List<(int LinkId, ListNode Node)>();
                     var globalLinkId = 0;
 
                     //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
@@ -36,7 +40,7 @@ namespace ListSerializer
                             current = current.Next;
                         }
 
-                        var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
+                        var currentLinkId = GetLinkId(in list, in current, ref globalLinkId);
                         s.Write(BitConverter.GetBytes(currentLinkId));
 
                         if (current.Data == null)
@@ -58,7 +62,7 @@ namespace ListSerializer
                         }
                         else
                         {
-                            var linkRandom = GetLinkId(in dic, in current.Random, ref globalLinkId);
+                            var linkRandom = GetLinkId(in list, in current.Random, ref globalLinkId);
                             s.Write(BitConverter.GetBytes(linkRandom));
                         }
                     }
@@ -69,39 +73,23 @@ namespace ListSerializer
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int GetLinkId(
-            in Dictionary<ListNode, List<(int LinkId, ListNode Node)>> dictionary,
+            in List<(int LinkId, ListNode Node)> listNodes,
             in ListNode node,
             ref int linkCounter)
         {
-            if (dictionary.TryGetValue(node, out var listLink))
+            var nodeHashCode = node.GetHashCode();
+            foreach (var item in listNodes)
             {
-                foreach (var item in listLink)
+                if (nodeHashCode == item.Node.GetHashCode() && object.ReferenceEquals(item.Node, node))
                 {
-                    if (object.ReferenceEquals(item.Node, node))
-                    {
-                        return item.LinkId;
-                    }
+                    return item.LinkId;
                 }
-
-                linkCounter++;
-                var linkId = linkCounter;
-                dictionary.Add(node, new List<(int, ListNode)>()
-                {
-                    (linkId, node)
-                });
-                return linkId;
             }
-            else
-            {
-                linkCounter++;
-                var linkId = linkCounter;
-                dictionary.Add(node, new List<(int, ListNode)>()
-                {
-                    (linkId, node)
-                });
 
-                return linkId;
-            }
+            linkCounter++;
+            var linkId = linkCounter;
+            listNodes.Add((linkId, node));
+            return linkId;
         }
 
         /// <summary>
