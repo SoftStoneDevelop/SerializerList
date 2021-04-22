@@ -24,5 +24,17 @@
         /// Payload
         /// </summary>
         public string Data;
+
+        public override int GetHashCode()
+        {
+            if (Data != null)
+            {
+                return Data.GetHashCode();
+            }
+            else
+            {
+                return base.GetHashCode();
+            }
+        }
     }
 }

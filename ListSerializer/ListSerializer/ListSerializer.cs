@@ -10,6 +10,8 @@ namespace ListSerializer
 {
     public class ListSerializer : IListSerializer
     {
+        private const int NullReference = -1;
+
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -17,7 +19,7 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
                 {
-                    var dic = new Dictionary<string, List<(int LinkId, ListNode Node)>>();
+                    var dic = new Dictionary<ListNode, List<(int LinkId, ListNode Node)>>();
                     var globalLinkId = 0;
 
                     //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte]
@@ -37,13 +39,22 @@ namespace ListSerializer
                         var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
                         s.Write(BitConverter.GetBytes(currentLinkId));
 
-                        byte[] bytes = Encoding.UTF8.GetBytes(current.Data);
-                        var lengthBytes = BitConverter.GetBytes(bytes.Length);
-                        s.Write(lengthBytes);
-                        s.Write(bytes);
+                        if (current.Data == null)
+                        {
+                            var lengthBytes = BitConverter.GetBytes(NullReference);
+                            s.Write(lengthBytes);
+                        }
+                        else
+                        {
+                            byte[] bytes = Encoding.Unicode.GetBytes(current.Data);
+                            var lengthBytes = BitConverter.GetBytes(bytes.Length);
+                            s.Write(lengthBytes);
+                            s.Write(bytes);
+                        }
+                        
                         if (current.Random == null)
                         {
-                            s.Write(BitConverter.GetBytes(0));
+                            s.Write(BitConverter.GetBytes(NullReference));
                         }
                         else
                         {
@@ -58,11 +69,11 @@ namespace ListSerializer
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int GetLinkId(
-            in Dictionary<string, List<(int LinkId, ListNode Node)>> dictionary,
+            in Dictionary<ListNode, List<(int LinkId, ListNode Node)>> dictionary,
             in ListNode node,
             ref int linkCounter)
         {
-            if (dictionary.TryGetValue(node.Data, out var listLink))
+            if (dictionary.TryGetValue(node, out var listLink))
             {
                 foreach (var item in listLink)
                 {
@@ -74,7 +85,7 @@ namespace ListSerializer
 
                 linkCounter++;
                 var linkId = linkCounter;
-                dictionary.Add(node.Data, new List<(int, ListNode)>()
+                dictionary.Add(node, new List<(int, ListNode)>()
                 {
                     (linkId, node)
                 });
@@ -84,7 +95,7 @@ namespace ListSerializer
             {
                 linkCounter++;
                 var linkId = linkCounter;
-                dictionary.Add(node.Data, new List<(int, ListNode)>()
+                dictionary.Add(node, new List<(int, ListNode)>()
                 {
                     (linkId, node)
                 });
@@ -136,14 +147,18 @@ namespace ListSerializer
                     }
 
                     var length = BitConverter.ToInt32(bufferLength);
-                    var bufferData = new byte[length];
-                    if (s.Read(bufferData, 0, bufferData.Length) <= 0)
-                    {
-                        throw new ArgumentException();
-                    }
 
-                    var data =Encoding.UTF8.GetString(bufferData);
-                    current.Data = data;
+                    if (length != NullReference)
+                    {
+                        var bufferData = new byte[length];
+                        if (s.Read(bufferData, 0, bufferData.Length) <= 0)
+                        {
+                            throw new ArgumentException();
+                        }
+
+                        var data = Encoding.Unicode.GetString(bufferData);
+                        current.Data = data;
+                    }
 
                     var bufferRandomLink = new byte[4];
                     if (s.Read(bufferRandomLink, 0, bufferRandomLink.Length) <= 0)
@@ -152,8 +167,7 @@ namespace ListSerializer
                     }
 
                     var randomLink = BitConverter.ToInt32(bufferRandomLink);
-
-                    if (randomLink != 0)//means not null
+                    if (randomLink != NullReference)//means not null
                     {
                         if (linkDictionary.TryGetValue(randomLink, out var findNode))
                         {
