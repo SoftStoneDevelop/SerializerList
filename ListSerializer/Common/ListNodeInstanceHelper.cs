@@ -22,7 +22,11 @@ namespace Common
 
             for (int i = 0; i < depth; i++)
             {
-                var next = new ListNode { Data = $"Node № {i + 1}" };
+                var next = new ListNode();
+                if (i%2 >0)
+                {
+                    next.Data = $"Node № {i + 1}";
+                }
                 previus.Next = next;
                 next.Previous = previus;
                 previus = next;
