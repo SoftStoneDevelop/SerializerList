@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace ListSerializer
 {
@@ -101,8 +102,7 @@ namespace ListSerializer
                     ListNode current = null;
                     do
                     {
-                        if (ctUpSeeker.IsCancellationRequested)
-                            return -1;
+                        ctUpSeeker.ThrowIfCancellationRequested();
 
                         if (current == null)
                         {
@@ -130,8 +130,7 @@ namespace ListSerializer
                     ListNode current = null;
                     do
                     {
-                        if(ctDownSeeker.IsCancellationRequested)
-                            return -1;
+                        ctDownSeeker.ThrowIfCancellationRequested();
 
                         if (current == null)
                         {
@@ -160,7 +159,18 @@ namespace ListSerializer
                     upSeeker.Wait();
                     result = upSeeker.Result;
                 }
-                catch (Exception e)
+                catch(OperationCanceledException)
+                {
+                    //ignore
+                }
+                catch (AggregateException agg)
+                {
+                    if(!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
+                        throw;
+
+                    //ignore
+                }
+                catch
                 {
                     throw;
                 }
@@ -173,7 +183,18 @@ namespace ListSerializer
                     downSeeker.Wait();
                     result = downSeeker.Result;
                 }
-                catch (Exception e)
+                catch (OperationCanceledException)
+                {
+                    //ignore
+                }
+                catch (AggregateException agg)
+                {
+                    if (!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
+                        throw;
+
+                    //ignore
+                }
+                catch
                 {
                     throw;
                 }
