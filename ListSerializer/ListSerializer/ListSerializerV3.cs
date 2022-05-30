@@ -63,7 +63,8 @@ namespace ListSerializer
                     //write links
                     current = null;
 
-                    var logicalProcessors = Environment.ProcessorCount;
+                    int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
+                    var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
                     var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
                     
                     if(itemsInPackage < 500)
