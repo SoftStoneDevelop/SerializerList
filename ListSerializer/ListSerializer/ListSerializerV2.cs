@@ -90,95 +90,101 @@ namespace ListSerializer
         private int FindRealIdNode(ListNode node, int currentId )
         {
             CancellationTokenSource ctsUpSeeker = new CancellationTokenSource();
+            var ctUpSeeker = ctsUpSeeker.Token;
             CancellationTokenSource ctsDownSeeker = new CancellationTokenSource();
+            var ctDownSeeker = ctsDownSeeker.Token;
 
-            Task<int> upSeeker = Task.Factory.StartNew(() => 
-            {
-                ListNode current = null;
-                do
-                {
-                    ctsUpSeeker.Token.ThrowIfCancellationRequested();
-                    if (current == null)
-                    {
-                        current = node;
-                    }
-                    else
-                    {
-                        current = current.Previous;
-                        currentId--;
-                    }
-
-                    if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
-                        continue;
-
-                    ctsDownSeeker.Cancel();
-                    return currentId;
-                }
-                while (current.Previous != null);
-
-                return -1;
-            }, ctsUpSeeker.Token);
-
-            Task<int> downSeeker = Task.Factory.StartNew(() =>
-            {
-                ListNode current = null;
-                do
-                {
-                    ctsDownSeeker.Token.ThrowIfCancellationRequested();
-                    if (current == null)
-                    {
-                        current = node;
-                    }
-                    else
-                    {
-                        current = current.Next;
-                        currentId++;
-                    }
-
-                    if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
-                        continue;
-
-                    ctsUpSeeker.Cancel();
-                    return currentId;
-                }
-                while (current.Next != null);
-                
-                return -1;
-            }, ctsDownSeeker.Token);
-
-            int result = -1;
             try
             {
-                upSeeker.Wait();
-                result = upSeeker.Result;
-            }
-            catch(TaskCanceledException)
-            {
-                //ignore
-            }
-            catch
-            {
-                throw;
-            }
+                Task<int> upSeeker = Task.Factory.StartNew(() =>
+                {
+                    ListNode current = null;
+                    do
+                    {
+                        if (ctUpSeeker.IsCancellationRequested)
+                            return -1;
 
-            if(result != -1)
+                        if (current == null)
+                        {
+                            current = node;
+                        }
+                        else
+                        {
+                            current = current.Previous;
+                            currentId--;
+                        }
+
+                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                            continue;
+
+                        ctsDownSeeker.Cancel();
+                        return currentId;
+                    }
+                    while (current.Previous != null);
+
+                    return -1;
+                }, ctUpSeeker);
+
+                Task<int> downSeeker = Task.Factory.StartNew(() =>
+                {
+                    ListNode current = null;
+                    do
+                    {
+                        if(ctDownSeeker.IsCancellationRequested)
+                            return -1;
+
+                        if (current == null)
+                        {
+                            current = node;
+                        }
+                        else
+                        {
+                            current = current.Next;
+                            currentId++;
+                        }
+
+                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                            continue;
+
+                        ctsUpSeeker.Cancel();
+                        return currentId;
+                    }
+                    while (current.Next != null);
+
+                    return -1;
+                }, ctDownSeeker);
+
+                int result = -1;
+                try
+                {
+                    upSeeker.Wait();
+                    result = upSeeker.Result;
+                }
+                catch (Exception e)
+                {
+                    throw;
+                }
+
+                if (result != -1)
+                    return result;
+
+                try
+                {
+                    downSeeker.Wait();
+                    result = downSeeker.Result;
+                }
+                catch (Exception e)
+                {
+                    throw;
+                }
+
                 return result;
-
-            try
-            {
-                downSeeker.Wait();
-                result = downSeeker.Result;
             }
-            catch (TaskCanceledException)
+            finally
             {
-                //ignore
+                ctsUpSeeker.Dispose();
+                ctsDownSeeker.Dispose();
             }
-            catch
-            {
-                throw;
-            }
-
-            return result;
         }
 
         /// <summary>
