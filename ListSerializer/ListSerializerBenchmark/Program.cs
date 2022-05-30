@@ -7,7 +7,8 @@ namespace ListSerializerBenchmark
         static void Main(string[] args)
         {
             //BenchmarkRunner.Run<ListSerializerJob>();
-            BenchmarkRunner.Run<ListSerializerV2Job>();
+            //BenchmarkRunner.Run<ListSerializerV2Job>();
+            BenchmarkRunner.Run<ListSerializerV3Job>();
         }
     }
 }

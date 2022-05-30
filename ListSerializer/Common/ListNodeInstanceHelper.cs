@@ -23,7 +23,7 @@ namespace Common
             for (int i = 0; i < depth; i++)
             {
                 var next = new ListNode();
-                if (i%2 >0)
+                //if (i%2 >0)
                 {
                     next.Data = $"Node № {i + 1}";
                 }
@@ -47,6 +47,58 @@ namespace Common
             }
 
             return head;
+        }
+
+        /// <summary>
+        /// Left list is correct
+        /// </summary>
+        public static bool DeepEqual(ListNode left, ListNode right)
+        {
+            var listLeft = new List<ListNode>();
+            ListNode current = null;
+            do
+            {
+                if (current == null)
+                {
+                    current = left;
+                }
+                else
+                {
+                    current = current.Next;
+                }
+
+                listLeft.Add(current);
+            }
+            while (current.Next != null);
+
+            current = null;
+            var currentId = 0;
+
+            do
+            {
+                if (current == null)
+                {
+                    current = right;
+                }
+                else
+                {
+                    current = current.Next;
+                }
+
+                currentId++;
+                if(currentId > listLeft.Count)
+                    return false;
+
+                var leftNode = listLeft[currentId];
+                if(!object.ReferenceEquals(leftNode.Random, current.Random))
+                    return false;
+
+                if (!leftNode.Data.Equals(current.Data))
+                    return false;
+            }
+            while (current.Next != null);
+
+            return true;
         }
     }
 }

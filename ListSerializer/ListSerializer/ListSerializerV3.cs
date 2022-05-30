@@ -10,7 +10,7 @@ using System.Linq;
 
 namespace ListSerializer
 {
-    public class ListSerializerV2 : IListSerializer
+    public class ListSerializerV3 : IListSerializer
     {
         private static readonly byte[] NullReferenceBytes = new byte[] { 255, 255, 255, 255 };
 
@@ -58,37 +58,136 @@ namespace ListSerializer
                     //write comma between packages and links
                     s.Write(NullReferenceBytes);
 
+                    var uniqueNodesCount = globalLinkId;
                     globalLinkId = -1;
                     //write links
                     current = null;
-                    do
+
+                    var logicalProcessors = Environment.ProcessorCount;
+                    var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
+                    
+                    if(itemsInPackage < 500)
                     {
-                        globalLinkId++;
-                        if (current == null)
-                        {
-                            current = head;
-                        }
-                        else
-                        {
-                            current = current.Next;
-                        }
-
-                        if (current.Random == null)
-                        {
-                            s.Write(NullReferenceBytes);
-                            continue;
-                        }
-
-                        var randomLinkId = FindRealIdNode(current, globalLinkId);
-                        s.Write(BitConverter.GetBytes(randomLinkId));
+                        itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
                     }
-                    while (current.Next != null);
+                    var threadsCount = (int)(uniqueNodesCount/ itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+
+                    if (threadsCount == 1)
+                    {
+                        do
+                        {
+                            globalLinkId++;
+                            if (current == null)
+                            {
+                                current = head;
+                            }
+                            else
+                            {
+                                current = current.Next;
+                            }
+
+                            if (current.Random == null)
+                            {
+                                s.Write(NullReferenceBytes);
+                                continue;
+                            }
+
+                            var randomLinkId = FindRealIdNode(current, globalLinkId);
+                            s.Write(BitConverter.GetBytes(randomLinkId));
+                        }
+                        while (current.Next != null);
+                    }
+                    else
+                    {
+                        globalLinkId = 0;
+                        current = head;
+                        var tasksFindingLinks = new List<Task<List<int>>>(threadsCount);
+                        var currentThread = 0;
+                        var skeepCount = 0;
+
+                        while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
+                        {
+                            while (skeepCount > 0)
+                            {
+                                skeepCount--;
+                                if (current == null)
+                                {
+                                    current = head;
+                                }
+                                else
+                                {
+                                    current = current.Next;
+                                }
+                                globalLinkId++;
+                            }
+
+                            currentThread++;
+
+                            if (currentThread < threadsCount)
+                            {
+                                var task = FindLinks(current, itemsInPackage, globalLinkId);
+                                tasksFindingLinks.Add(task);
+                            }
+                            else
+                            {
+                                var steps = uniqueNodesCount - (itemsInPackage * (currentThread - 1));
+                                var task = FindLinks(current, steps, globalLinkId);
+                                tasksFindingLinks.Add(task);
+                            }
+                            skeepCount = itemsInPackage;
+                        }
+
+                        foreach (var task in tasksFindingLinks)
+                        {
+                            task.Wait();
+                            var result = task.Result;
+                            foreach(var link in result)
+                                s.Write(BitConverter.GetBytes(link));
+                        }
+                    }
                 })
                 ;
         }
 
+        Task<List<int>> FindLinks(ListNode node, int steps, int currentId)
+        {
+            return Task.Factory.StartNew(() =>
+            {
+                var findLinks = new List<int>(steps);
+
+                ListNode current = null;
+                do
+                {
+                    if (current == null)
+                    {
+                        current = node;
+                    }
+                    else
+                    {
+                        current = current.Next;
+                    }
+
+                    if (current.Random == null)
+                    {
+                        findLinks.Add(-1);
+                        currentId++;
+                        steps--;
+                        continue;
+                    }
+
+                    var randomLinkId = FindRealIdNode(current, currentId);
+                    findLinks.Add(randomLinkId);
+                    currentId++;
+                    steps--;
+                }
+                while (steps > 0);
+
+                return findLinks;
+            });
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(ListNode node, int currentId )
+        private int FindRealIdNode(ListNode node, int currentId)
         {
             CancellationTokenSource ctsUpSeeker = new CancellationTokenSource();
             var ctUpSeeker = ctsUpSeeker.Token;
