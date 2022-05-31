@@ -23,7 +23,7 @@ namespace Common
             for (int i = 0; i < depth; i++)
             {
                 var next = new ListNode();
-                //if (i%2 >0)
+                if (i%2 >0)
                 {
                     next.Data = $"Node № {i + 1}";
                 }
