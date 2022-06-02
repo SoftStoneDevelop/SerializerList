@@ -19,7 +19,7 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
                 {
-                    var dic = new Dictionary<ListNode, List<(int LinkId, ListNode Node)>>();
+                    var dic = new Dictionary<ListNode, int>();
                     var globalLinkId = 0;
 
                     //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
@@ -69,38 +69,20 @@ namespace ListSerializer
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int GetLinkId(
-            in Dictionary<ListNode, List<(int LinkId, ListNode Node)>> dictionary,
+            in Dictionary<ListNode, int> dictionary,
             in ListNode node,
             ref int linkCounter)
         {
-            if (dictionary.TryGetValue(node, out var listLink))
+            if (dictionary.TryGetValue(node, out var linkId))
             {
-                foreach (var item in listLink)
-                {
-                    if (object.ReferenceEquals(item.Node, node))
-                    {
-                        return item.LinkId;
-                    }
-                }
-
-                linkCounter++;
-                var linkId = linkCounter;
-                dictionary.Add(node, new List<(int, ListNode)>()
-                {
-                    (linkId, node)
-                });
                 return linkId;
             }
             else
             {
                 linkCounter++;
-                var linkId = linkCounter;
-                dictionary.Add(node, new List<(int, ListNode)>()
-                {
-                    (linkId, node)
-                });
+                dictionary.Add(node, linkCounter);
 
-                return linkId;
+                return linkCounter;
             }
         }
 
@@ -204,7 +186,7 @@ namespace ListSerializer
         /// </summary>
         public Task<ListNode> DeepCopy(ListNode head)
         {
-            return Task<ListNode>.Factory.StartNew((() =>
+            return Task<ListNode>.Factory.StartNew(() =>
             {
                 using (var stream = new MemoryStream())
                 {
@@ -214,7 +196,7 @@ namespace ListSerializer
                     taskDeserialize.Wait();
                     return taskDeserialize.Result;
                 }
-            }));
+            });
         }
     }
 }
