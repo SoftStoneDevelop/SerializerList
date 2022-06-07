@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Buffers;
 
 namespace ListSerializer
 {
@@ -22,6 +23,7 @@ namespace ListSerializer
             return Task.Factory.StartNew(() =>
                 {
                     var globalLinkId = 0;
+                    ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
 
                     //package [linkBytes 4byte][length 4byte][data]
                     //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
@@ -47,10 +49,18 @@ namespace ListSerializer
                         }
                         else
                         {
-                            byte[] bytes = Encoding.Unicode.GetBytes(current.Data);
-                            var lengthBytes = BitConverter.GetBytes(bytes.Length);
-                            s.Write(lengthBytes);
-                            s.Write(bytes);
+                            var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
+                            var bytes = arrayPool.Rent(byteCount);
+                            try
+                            {
+                                var size = Encoding.Unicode.GetBytes(current.Data, bytes);
+                                s.Write(BitConverter.GetBytes(size));
+                                s.Write(bytes, 0, size);
+                            }
+                            finally
+                            {
+                                arrayPool.Return(bytes);
+                            }
                         }
                     }
                     while (current.Next != null);
@@ -220,14 +230,16 @@ namespace ListSerializer
             {
                 s.Position = 0;
                 ListNode head = null;
-                var bufferLink = new byte[4];
+                var bufferForInt32 = new byte[4];
                 var allUniqueNodes = new List<ListNode>();
 
                 ListNode current = null;
                 ListNode previous = null;
-                while (s.Read(bufferLink, 0, bufferLink.Length) > 0)
+                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+
+                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
                 {
-                    var linkId = BitConverter.ToInt32(bufferLink, 0);
+                    var linkId = BitConverter.ToInt32(bufferForInt32, 0);
                     if(linkId == -1)//end unique nodes
                         break;
 
@@ -243,31 +255,37 @@ namespace ListSerializer
                         head = current;
                     }
 
-                    var bufferLength = new byte[4];
-                    if (s.Read(bufferLength, 0, bufferLength.Length) <= 0)
+                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
                     {
                         throw new ArgumentException("Unexpected end of stream, expect four bytes");
                     }
 
-                    var length = BitConverter.ToInt32(bufferLength);
+                    var length = BitConverter.ToInt32(bufferForInt32);
                     if (length != -1)
                     {
-                        var bufferData = new byte[length];
-                        if (s.Read(bufferData, 0, bufferData.Length) <= 0)
+                        var bufferData = arrayPool.Rent(length);
+                        try
                         {
-                            throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
-                        }
+                            if (s.Read(bufferData, 0, length) < length)
+                            {
+                                throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                            }
 
-                        current.Data = Encoding.Unicode.GetString(bufferData);
+                            current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
+                        }
+                        finally
+                        {
+                            arrayPool.Return(bufferData);
+                        }
                     }
 
                     previous = current;
                 }
 
                 int uniqueNodesIndex = 0;
-                while (s.Read(bufferLink, 0, bufferLink.Length) > 0)
+                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
                 {
-                    int linkIndex = BitConverter.ToInt32(bufferLink, 0);
+                    int linkIndex = BitConverter.ToInt32(bufferForInt32, 0);
                     if(linkIndex != -1)
                         allUniqueNodes[uniqueNodesIndex].Random = allUniqueNodes[linkIndex];
 

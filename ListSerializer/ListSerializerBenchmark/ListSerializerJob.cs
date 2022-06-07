@@ -8,7 +8,7 @@ namespace ListSerializerBenchmark
     [SimpleJob(RuntimeMoniker.Net60)]
     public class ListSerializerJob
     {
-        [Params(100, 1000, 10000, 100000, 250000, 500000)]
+        [Params(100, 1000, 10000, 100000, 250000, 500000, 1000000)]
         public int Size;
 
         private ListNode _head;

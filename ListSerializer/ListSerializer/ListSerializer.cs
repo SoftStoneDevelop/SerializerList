@@ -1,7 +1,9 @@
 ﻿using Common;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,6 +23,7 @@ namespace ListSerializer
                 {
                     var dic = new Dictionary<ListNode, int>();
                     var globalLinkId = 0;
+                    ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
 
                     //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
                     s.Position = 0;
@@ -46,10 +49,18 @@ namespace ListSerializer
                         }
                         else
                         {
-                            byte[] bytes = Encoding.Unicode.GetBytes(current.Data);
-                            var lengthBytes = BitConverter.GetBytes(bytes.Length);
-                            s.Write(lengthBytes);
-                            s.Write(bytes);
+                            var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
+                            var bytes = arrayPool.Rent(byteCount);
+                            try
+                            {
+                                var size = Encoding.Unicode.GetBytes(current.Data, bytes);
+                                s.Write(BitConverter.GetBytes(size));
+                                s.Write(bytes, 0, size);
+                            }
+                            finally
+                            {
+                                arrayPool.Return(bytes);
+                            }
                         }
                         
                         if (current.Random == null)
@@ -96,15 +107,17 @@ namespace ListSerializer
             {
                 s.Position = 0;
                 ListNode head = null;
-                var bufferLink = new byte[4];
+                var bufferForInt32 = new byte[4];
                 var linkDictionary = new Dictionary<int, ListNode>();
                 var listNeedSetRandom = new List<(int linkId, int randomLinkId)>();
 
                 ListNode current = null;
                 ListNode previous = null;
-                while (s.Read(bufferLink, 0, bufferLink.Length) > 0)
+                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+
+                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
                 {
-                    var linkId = BitConverter.ToInt32(bufferLink, 0);
+                    var linkId = BitConverter.ToInt32(bufferForInt32, 0);
 
                     current = new ListNode();
                     if (previous != null)
@@ -122,33 +135,37 @@ namespace ListSerializer
                         linkDictionary.Add(linkId, current);
                     }
 
-                    var bufferLength = new byte[4];
-                    if (s.Read(bufferLength, 0, bufferLength.Length) <= 0)
+                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
                     {
                         throw new ArgumentException("not find length data in stream");
                     }
 
-                    var length = BitConverter.ToInt32(bufferLength);
+                    var length = BitConverter.ToInt32(bufferForInt32);
 
                     if (length != NullReference)
                     {
-                        var bufferData = new byte[length];
-                        if (s.Read(bufferData, 0, bufferData.Length) <= 0)
+                        var bufferData = arrayPool.Rent(length);
+                        try
                         {
-                            throw new ArgumentException();
-                        }
+                            if (s.Read(bufferData, 0, length) < length)
+                            {
+                                throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                            }
 
-                        var data = Encoding.Unicode.GetString(bufferData);
-                        current.Data = data;
+                            current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
+                        }
+                        finally
+                        {
+                            arrayPool.Return(bufferData);
+                        }
                     }
 
-                    var bufferRandomLink = new byte[4];
-                    if (s.Read(bufferRandomLink, 0, bufferRandomLink.Length) <= 0)
+                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
                     {
                         throw new ArgumentException();
                     }
 
-                    var randomLink = BitConverter.ToInt32(bufferRandomLink);
+                    var randomLink = BitConverter.ToInt32(bufferForInt32);
                     if (randomLink != NullReference)//means not null
                     {
                         if (linkDictionary.TryGetValue(randomLink, out var findNode))
