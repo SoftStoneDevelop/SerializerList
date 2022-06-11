@@ -24,6 +24,7 @@ namespace ListSerializer
                     var dic = new Dictionary<ListNode, int>();
                     var globalLinkId = 0;
                     ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+                    Span<byte> intBytes = stackalloc byte[sizeof(int)];
 
                     //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
                     s.Position = 0;
@@ -40,7 +41,8 @@ namespace ListSerializer
                         }
 
                         var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
-                        s.Write(BitConverter.GetBytes(currentLinkId));
+                        Unsafe.As<byte, int>(ref intBytes[0]) = currentLinkId;
+                        s.Write(intBytes);
 
                         if (current.Data == null)
                         {
@@ -53,7 +55,8 @@ namespace ListSerializer
                             try
                             {
                                 var size = Encoding.Unicode.GetBytes(current.Data, bytes);
-                                s.Write(BitConverter.GetBytes(size));
+                                Unsafe.As<byte, int>(ref intBytes[0]) = size;
+                                s.Write(intBytes);
                                 s.Write(bytes, 0, size);
                             }
                             finally
@@ -69,7 +72,8 @@ namespace ListSerializer
                         else
                         {
                             var linkRandom = GetLinkId(in dic, in current.Random, ref globalLinkId);
-                            s.Write(BitConverter.GetBytes(linkRandom));
+                            Unsafe.As<byte, int>(ref intBytes[0]) = linkRandom;
+                            s.Write(intBytes);
                         }
                     }
                     while (current.Next != null);

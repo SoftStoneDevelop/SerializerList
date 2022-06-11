@@ -24,6 +24,7 @@ namespace ListSerializer
                 {
                     var globalLinkId = 0;
                     ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+                    Span<byte> intBytes = stackalloc byte[sizeof(int)];
 
                     //package [linkBytes 4byte][length 4byte][data]
                     //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
@@ -41,7 +42,8 @@ namespace ListSerializer
                         }
 
                         //write id unique Node
-                        s.Write(BitConverter.GetBytes(globalLinkId++));
+                        Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId++;
+                        s.Write(intBytes);
 
                         if (current.Data == null)
                         {
@@ -54,7 +56,8 @@ namespace ListSerializer
                             try
                             {
                                 var size = Encoding.Unicode.GetBytes(current.Data, bytes);
-                                s.Write(BitConverter.GetBytes(size));
+                                Unsafe.As<byte, int>(ref intBytes[0]) = size;
+                                s.Write(intBytes);
                                 s.Write(bytes, 0, size);
                             }
                             finally
@@ -104,7 +107,8 @@ namespace ListSerializer
                             }
 
                             var randomLinkId = FindRealIdNode(current, globalLinkId);
-                            s.Write(BitConverter.GetBytes(randomLinkId));
+                            Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
+                            s.Write(intBytes);
                         }
                         while (current.Next != null);
                     }
@@ -152,8 +156,11 @@ namespace ListSerializer
                         {
                             task.Wait();
                             var result = task.Result;
-                            foreach(var link in result)
-                                s.Write(BitConverter.GetBytes(link));
+                            foreach (var link in result)
+                            {
+                                Unsafe.As<byte, int>(ref intBytes[0]) = link;
+                                s.Write(intBytes);
+                            }
                         }
                     }
                 })
