@@ -12,7 +12,7 @@ namespace ListSerializer
 {
     public class ListSerializer : IListSerializer
     {
-        private const int NullReference = -1;
+        private static readonly byte[] NullReferenceBytes = new byte[] { 255, 255, 255, 255 };
 
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
@@ -44,8 +44,7 @@ namespace ListSerializer
 
                         if (current.Data == null)
                         {
-                            var lengthBytes = BitConverter.GetBytes(NullReference);
-                            s.Write(lengthBytes);
+                            s.Write(NullReferenceBytes);
                         }
                         else
                         {
@@ -65,7 +64,7 @@ namespace ListSerializer
                         
                         if (current.Random == null)
                         {
-                            s.Write(BitConverter.GetBytes(NullReference));
+                            s.Write(NullReferenceBytes);
                         }
                         else
                         {
@@ -107,7 +106,7 @@ namespace ListSerializer
             {
                 s.Position = 0;
                 ListNode head = null;
-                var bufferForInt32 = new byte[4];
+                Span<byte> bufferForInt32 = stackalloc byte[4];
                 var linkDictionary = new Dictionary<int, ListNode>();
                 var listNeedSetRandom = new List<(int linkId, int randomLinkId)>();
 
@@ -115,9 +114,9 @@ namespace ListSerializer
                 ListNode previous = null;
                 ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
 
-                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
+                while (s.Read(bufferForInt32) == bufferForInt32.Length)
                 {
-                    var linkId = BitConverter.ToInt32(bufferForInt32, 0);
+                    var linkId = BitConverter.ToInt32(bufferForInt32);
 
                     current = new ListNode();
                     if (previous != null)
@@ -135,14 +134,13 @@ namespace ListSerializer
                         linkDictionary.Add(linkId, current);
                     }
 
-                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
+                    if (s.Read(bufferForInt32) < bufferForInt32.Length)
                     {
                         throw new ArgumentException("not find length data in stream");
                     }
 
                     var length = BitConverter.ToInt32(bufferForInt32);
-
-                    if (length != NullReference)
+                    if (length != -1)
                     {
                         var bufferData = arrayPool.Rent(length);
                         try
@@ -160,13 +158,13 @@ namespace ListSerializer
                         }
                     }
 
-                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
+                    if (s.Read(bufferForInt32) < bufferForInt32.Length)
                     {
                         throw new ArgumentException();
                     }
 
                     var randomLink = BitConverter.ToInt32(bufferForInt32);
-                    if (randomLink != NullReference)//means not null
+                    if (randomLink != -1)//means not null
                     {
                         if (linkDictionary.TryGetValue(randomLink, out var findNode))
                         {

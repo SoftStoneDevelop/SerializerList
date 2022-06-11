@@ -125,7 +125,7 @@ namespace ListSerializer
                             currentIdUp--;
                         }
 
-                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                        if (!ReferenceEquals(node.Random, current))
                             continue;
 
                         ctsDownSeeker.Cancel();
@@ -154,7 +154,7 @@ namespace ListSerializer
                             currentIdDown++;
                         }
 
-                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                        if (!object.ReferenceEquals(node.Random, current))
                             continue;
 
                         ctsUpSeeker.Cancel();
@@ -230,16 +230,16 @@ namespace ListSerializer
             {
                 s.Position = 0;
                 ListNode head = null;
-                var bufferForInt32 = new byte[4];
+                Span<byte> bufferForInt32 = stackalloc byte[4];
                 var allUniqueNodes = new List<ListNode>();
 
                 ListNode current = null;
                 ListNode previous = null;
                 ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
 
-                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
+                while (s.Read(bufferForInt32) == bufferForInt32.Length)
                 {
-                    var linkId = BitConverter.ToInt32(bufferForInt32, 0);
+                    var linkId = BitConverter.ToInt32(bufferForInt32);
                     if(linkId == -1)//end unique nodes
                         break;
 
@@ -255,7 +255,7 @@ namespace ListSerializer
                         head = current;
                     }
 
-                    if (s.Read(bufferForInt32, 0, bufferForInt32.Length) < bufferForInt32.Length)
+                    if (s.Read(bufferForInt32) < bufferForInt32.Length)
                     {
                         throw new ArgumentException("Unexpected end of stream, expect four bytes");
                     }
@@ -283,9 +283,9 @@ namespace ListSerializer
                 }
 
                 int uniqueNodesIndex = 0;
-                while (s.Read(bufferForInt32, 0, bufferForInt32.Length) == bufferForInt32.Length)
+                while (s.Read(bufferForInt32) == bufferForInt32.Length)
                 {
-                    int linkIndex = BitConverter.ToInt32(bufferForInt32, 0);
+                    int linkIndex = BitConverter.ToInt32(bufferForInt32);
                     if(linkIndex != -1)
                         allUniqueNodes[uniqueNodesIndex].Random = allUniqueNodes[linkIndex];
 
