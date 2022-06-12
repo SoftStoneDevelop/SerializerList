@@ -232,7 +232,7 @@ namespace ListSerializer
                             currentIdUp--;
                         }
 
-                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                        if (!ReferenceEquals(node.Random, current))
                             continue;
 
                         ctsDownSeeker.Cancel();
@@ -261,7 +261,7 @@ namespace ListSerializer
                             currentIdDown++;
                         }
 
-                        if (!object.Equals(node.Random, current) || !object.ReferenceEquals(node.Random, current))
+                        if (!ReferenceEquals(node.Random, current))
                             continue;
 
                         ctsUpSeeker.Cancel();
