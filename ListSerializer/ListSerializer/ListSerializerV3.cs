@@ -343,6 +343,7 @@ namespace ListSerializer
                 ListNode current = null;
                 ListNode previous = null;
                 ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+                ArrayPool<char> arrayCharPool = ArrayPool<char>.Shared;
 
                 while (s.Read(bufferForInt32) == bufferForInt32.Length)
                 {
@@ -378,7 +379,27 @@ namespace ListSerializer
                                 throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                             }
 
-                            current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
+                            var charsCount = Encoding.Unicode.GetCharCount(new Span<byte>(bufferData, 0, length));
+                            var bufferChars = arrayCharPool.Rent(charsCount);
+                            try
+                            {
+                                //create string from trash, just because 
+                                //https://github.com/dotnet/runtime/issues/36989 string.FastAllocateString internal
+                                current.Data = new string(new Span<char>(bufferChars, 0, charsCount));
+
+                                unsafe
+                                {
+                                    fixed (char* pTempChars = &current.Data.GetPinnableReference())
+                                    fixed (byte* pTempByte = &bufferData[0])
+                                    {
+                                        Encoding.Unicode.GetChars(pTempByte, length, pTempChars, charsCount);
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                arrayCharPool.Return(bufferChars);
+                            }
                         }
                         finally
                         {
