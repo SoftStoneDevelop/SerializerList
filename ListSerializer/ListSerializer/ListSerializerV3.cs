@@ -1,13 +1,12 @@
 ﻿using Common;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Linq;
-using System.Buffers;
 
 namespace ListSerializer
 {
@@ -21,17 +20,76 @@ namespace ListSerializer
         public Task Serialize(ListNode head, Stream s)
         {
             return Task.Factory.StartNew(() =>
-                {
-                    var globalLinkId = 0;
-                    ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
-                    Span<byte> intBytes = stackalloc byte[sizeof(int)];
+            {
+                var globalLinkId = 0;
+                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+                var intBytes = new byte[sizeof(int)];
 
-                    //package [linkBytes 4byte][length 4byte][data]
-                    //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
-                    s.Position = 0;
-                    ListNode current = null;
+                //package [linkBytes 4byte][length 4byte][data]
+                //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
+                s.Position = 0;
+                ListNode current = null;
+                do
+                {
+                    if (current == null)
+                    {
+                        current = head;
+                    }
+                    else
+                    {
+                        current = current.Next;
+                    }
+
+                    //write id unique Node
+                    Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId++;
+                    s.Write(intBytes);
+
+                    if (current.Data == null)
+                    {
+                        s.Write(NullReferenceBytes);
+                    }
+                    else
+                    {
+                        var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
+                        var bytes = arrayPool.Rent(byteCount);
+                        try
+                        {
+                            var size = Encoding.Unicode.GetBytes(current.Data, bytes);
+                            Unsafe.As<byte, int>(ref intBytes[0]) = size;
+                            s.Write(intBytes);
+                            s.Write(bytes, 0, size);
+                        }
+                        finally
+                        {
+                            arrayPool.Return(bytes);
+                        }
+                    }
+                }
+                while (current.Next != null);
+
+                //write comma between packages and links
+                s.Write(NullReferenceBytes);
+
+                var uniqueNodesCount = globalLinkId;
+                globalLinkId = -1;
+                //write links
+                current = null;
+
+                int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
+                var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
+                var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
+
+                if (itemsInPackage < 500)
+                {
+                    itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
+                }
+                var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+
+                if (threadsCount == 1)
+                {
                     do
                     {
+                        globalLinkId++;
                         if (current == null)
                         {
                             current = head;
@@ -41,56 +99,35 @@ namespace ListSerializer
                             current = current.Next;
                         }
 
-                        //write id unique Node
-                        Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId++;
-                        s.Write(intBytes);
-
-                        if (current.Data == null)
+                        if (current.Random == null)
                         {
                             s.Write(NullReferenceBytes);
+                            continue;
                         }
-                        else
-                        {
-                            var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
-                            var bytes = arrayPool.Rent(byteCount);
-                            try
-                            {
-                                var size = Encoding.Unicode.GetBytes(current.Data, bytes);
-                                Unsafe.As<byte, int>(ref intBytes[0]) = size;
-                                s.Write(intBytes);
-                                s.Write(bytes, 0, size);
-                            }
-                            finally
-                            {
-                                arrayPool.Return(bytes);
-                            }
-                        }
+
+                        var randomLinkId = FindRealIdNode(current, globalLinkId);
+                        Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId;
+                        s.Write(intBytes);
+
+                        Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
+                        s.Write(intBytes);
                     }
                     while (current.Next != null);
+                }
+                else
+                {
+                    globalLinkId = 0;
+                    current = head;
+                    var tasksFindingLinks = new List<Task<bool>>(threadsCount);
+                    var currentThread = 0;
+                    var skeepCount = 0;
+                    var lockStream = new object();
 
-                    //write comma between packages and links
-                    s.Write(NullReferenceBytes);
-
-                    var uniqueNodesCount = globalLinkId;
-                    globalLinkId = -1;
-                    //write links
-                    current = null;
-
-                    int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
-                    var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
-                    var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
-                    
-                    if(itemsInPackage < 500)
+                    while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
                     {
-                        itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
-                    }
-                    var threadsCount = (int)(uniqueNodesCount/ itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
-
-                    if (threadsCount == 1)
-                    {
-                        do
+                        while (skeepCount > 0)
                         {
-                            globalLinkId++;
+                            skeepCount--;
                             if (current == null)
                             {
                                 current = head;
@@ -99,81 +136,43 @@ namespace ListSerializer
                             {
                                 current = current.Next;
                             }
-
-                            if (current.Random == null)
-                            {
-                                s.Write(NullReferenceBytes);
-                                continue;
-                            }
-
-                            var randomLinkId = FindRealIdNode(current, globalLinkId);
-                            Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
-                            s.Write(intBytes);
+                            globalLinkId++;
                         }
-                        while (current.Next != null);
-                    }
-                    else
-                    {
-                        globalLinkId = 0;
-                        current = head;
-                        var tasksFindingLinks = new List<Task<List<int>>>(threadsCount);
-                        var currentThread = 0;
-                        var skeepCount = 0;
 
-                        while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
+                        currentThread++;
+
+                        if (currentThread < threadsCount)
                         {
-                            while (skeepCount > 0)
-                            {
-                                skeepCount--;
-                                if (current == null)
-                                {
-                                    current = head;
-                                }
-                                else
-                                {
-                                    current = current.Next;
-                                }
-                                globalLinkId++;
-                            }
-
-                            currentThread++;
-
-                            if (currentThread < threadsCount)
-                            {
-                                var task = FindLinks(current, itemsInPackage, globalLinkId);
-                                tasksFindingLinks.Add(task);
-                            }
-                            else
-                            {
-                                var steps = uniqueNodesCount - (itemsInPackage * (currentThread - 1));
-                                var task = FindLinks(current, steps, globalLinkId);
-                                tasksFindingLinks.Add(task);
-                            }
-                            skeepCount = itemsInPackage;
+                            var task = FindLinks(current, itemsInPackage, globalLinkId, s, lockStream, intBytes);
+                            tasksFindingLinks.Add(task);
                         }
-
-                        foreach (var task in tasksFindingLinks)
+                        else
                         {
-                            task.Wait();
-                            var result = task.Result;
-                            foreach (var link in result)
-                            {
-                                Unsafe.As<byte, int>(ref intBytes[0]) = link;
-                                s.Write(intBytes);
-                            }
+                            var steps = uniqueNodesCount - (itemsInPackage * (currentThread - 1));
+                            var task = FindLinks(current, steps, globalLinkId, s, lockStream, intBytes);
+                            tasksFindingLinks.Add(task);
                         }
+                        skeepCount = itemsInPackage;
                     }
-                })
-                ;
+
+                    Task.WaitAll(tasksFindingLinks.ToArray());
+                }
+            });
         }
 
-        Task<List<int>> FindLinks(ListNode node, int steps, int currentId)
+        Task<bool> FindLinks(
+            ListNode node,
+            int steps,
+            int currentId,
+            Stream s,
+            object lockStream,
+            byte[] intBytes
+            )
         {
             return Task.Factory.StartNew(() =>
             {
-                var findLinks = new List<int>(steps);
-
                 ListNode current = null;
+                int randomLinkId = -1;
                 do
                 {
                     if (current == null)
@@ -187,144 +186,84 @@ namespace ListSerializer
 
                     if (current.Random == null)
                     {
-                        findLinks.Add(-1);
+                        lock(lockStream)
+                        {
+                            Unsafe.As<byte, int>(ref intBytes[0]) = currentId;
+                            s.Write(intBytes);
+
+                            Unsafe.As<byte, int>(ref intBytes[0]) = -1;
+                            s.Write(intBytes);
+                        }
+                        
                         currentId++;
                         steps--;
                         continue;
                     }
 
-                    var randomLinkId = FindRealIdNode(current, currentId);
-                    findLinks.Add(randomLinkId);
+                    randomLinkId = FindRealIdNode(current, currentId);
+                    lock (lockStream)
+                    {
+                        Unsafe.As<byte, int>(ref intBytes[0]) = currentId;
+                        s.Write(intBytes);
+
+                        Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
+                        s.Write(intBytes);
+                    }
                     currentId++;
                     steps--;
                 }
                 while (steps > 0);
 
-                return findLinks;
+                return true;
             });
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int FindRealIdNode(ListNode node, int currentId)
         {
-            CancellationTokenSource ctsUpSeeker = new CancellationTokenSource();
-            var ctUpSeeker = ctsUpSeeker.Token;
-            CancellationTokenSource ctsDownSeeker = new CancellationTokenSource();
-            var ctDownSeeker = ctsDownSeeker.Token;
-
-            try
+            var currentLoopId = currentId;
+            ListNode current = null;
+            do
             {
-                var currentIdUp = currentId;
-                Task<int> upSeeker = Task.Factory.StartNew(() =>
+                if (current == null)
                 {
-                    ListNode current = null;
-                    do
-                    {
-                        ctUpSeeker.ThrowIfCancellationRequested();
-
-                        if (current == null)
-                        {
-                            current = node;
-                        }
-                        else
-                        {
-                            current = current.Previous;
-                            currentIdUp--;
-                        }
-
-                        if (!ReferenceEquals(node.Random, current))
-                            continue;
-
-                        ctsDownSeeker.Cancel();
-                        return currentIdUp;
-                    }
-                    while (current.Previous != null);
-
-                    return -1;
-                }, ctUpSeeker);
-
-                var currentIdDown = currentId;
-                Task<int> downSeeker = Task.Factory.StartNew(() =>
-                {
-                    ListNode current = null;
-                    do
-                    {
-                        ctDownSeeker.ThrowIfCancellationRequested();
-
-                        if (current == null)
-                        {
-                            current = node;
-                        }
-                        else
-                        {
-                            current = current.Next;
-                            currentIdDown++;
-                        }
-
-                        if (!ReferenceEquals(node.Random, current))
-                            continue;
-
-                        ctsUpSeeker.Cancel();
-                        return currentIdDown;
-                    }
-                    while (current.Next != null);
-
-                    return -1;
-                }, ctDownSeeker);
-
-                int result = -1;
-                try
-                {
-                    upSeeker.Wait();
-                    result = upSeeker.Result;
+                    current = node;
                 }
-                catch(OperationCanceledException)
+                else
                 {
-                    //ignore
-                }
-                catch (AggregateException agg)
-                {
-                    if(!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
-                        throw;
-
-                    //ignore
-                }
-                catch
-                {
-                    throw;
+                    current = current.Previous;
+                    currentLoopId--;
                 }
 
-                if (result != -1)
-                    return result;
+                if (!ReferenceEquals(node.Random, current))
+                    continue;
 
-                try
-                {
-                    downSeeker.Wait();
-                    result = downSeeker.Result;
-                }
-                catch (OperationCanceledException)
-                {
-                    //ignore
-                }
-                catch (AggregateException agg)
-                {
-                    if (!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
-                        throw;
-
-                    //ignore
-                }
-                catch
-                {
-                    throw;
-                }
-
-                return result;
+                return currentLoopId;
             }
-            finally
+            while (current.Previous != null);
+
+            currentLoopId = currentId;
+            current = null;
+            do
             {
-                ctsUpSeeker.Dispose();
-                ctsDownSeeker.Dispose();
+                if (current == null)
+                {
+                    current = node;
+                }
+                else
+                {
+                    current = current.Next;
+                    currentLoopId++;
+                }
+
+                if (!ReferenceEquals(node.Random, current))
+                    continue;
+
+                return currentLoopId;
             }
+            while (current.Next != null);
+
+            return -1;
         }
 
         /// <summary>
@@ -373,7 +312,7 @@ namespace ListSerializer
                         var bufferData = arrayPool.Rent(length);
                         try
                         {
-                            if (s.Read(bufferData, 0, length) < length)
+                            if (s.Read(bufferData, 0, length) != length)
                             {
                                 throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                             }
@@ -389,14 +328,16 @@ namespace ListSerializer
                     previous = current;
                 }
 
-                int uniqueNodesIndex = 0;
                 while (s.Read(bufferForInt32) == bufferForInt32.Length)
                 {
-                    int linkIndex = BitConverter.ToInt32(bufferForInt32);
-                    if(linkIndex != -1)
-                        allUniqueNodes[uniqueNodesIndex].Random = allUniqueNodes[linkIndex];
+                    int index = BitConverter.ToInt32(bufferForInt32);
 
-                    uniqueNodesIndex++;
+                    if (s.Read(bufferForInt32) != bufferForInt32.Length)
+                        throw new ArgumentException("Unexpected end of stream, expect four bytes");
+
+                    int linkIndex = BitConverter.ToInt32(bufferForInt32);
+                    if (linkIndex != -1)
+                        allUniqueNodes[index].Random = allUniqueNodes[linkIndex];
                 }
 
                 return head;
