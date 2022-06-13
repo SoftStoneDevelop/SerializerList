@@ -5,6 +5,7 @@ using ListSerializer;
 
 namespace ListSerializerBenchmark
 {
+    [MemoryDiagnoser]
     [SimpleJob(RuntimeMoniker.Net60)]
     public class ListSerializerV2Job
     {
@@ -14,7 +15,7 @@ namespace ListSerializerBenchmark
         private ListNode _head;
         private IListSerializer _serializer;
 
-        [IterationSetup]
+        [GlobalSetup]
         public void Setup()
         {
             _serializer = new ListSerializerV2();
