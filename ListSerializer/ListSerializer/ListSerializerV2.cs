@@ -1,13 +1,12 @@
 ﻿using Common;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Linq;
-using System.Buffers;
 
 namespace ListSerializer
 {
@@ -21,207 +20,131 @@ namespace ListSerializer
         public Task Serialize(ListNode head, Stream s)
         {
             return Task.Factory.StartNew(() =>
+            {
+                var globalLinkId = 0;
+                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+                Span<byte> intBytes = stackalloc byte[sizeof(int)];
+
+                //package [linkBytes 4byte][length 4byte][data]
+                //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
+                s.Position = 0;
+                ListNode current = null;
+                do
                 {
-                    var globalLinkId = 0;
-                    ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
-                    Span<byte> intBytes = stackalloc byte[sizeof(int)];
-
-                    //package [linkBytes 4byte][length 4byte][data]
-                    //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
-                    s.Position = 0;
-                    ListNode current = null;
-                    do
+                    if (current == null)
                     {
-                        if (current == null)
-                        {
-                            current = head;
-                        }
-                        else
-                        {
-                            current = current.Next;
-                        }
+                        current = head;
+                    }
+                    else
+                    {
+                        current = current.Next;
+                    }
 
-                        //write id unique Node
-                        Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId++;
-                        s.Write(intBytes);
+                    //write id unique Node
+                    Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId++;
+                    s.Write(intBytes);
 
-                        if (current.Data == null)
+                    if (current.Data == null)
+                    {
+                        s.Write(NullReferenceBytes);
+                    }
+                    else
+                    {
+                        var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
+                        var bytes = arrayPool.Rent(byteCount);
+                        try
                         {
-                            s.Write(NullReferenceBytes);
+                            var size = Encoding.Unicode.GetBytes(current.Data, bytes);
+                            Unsafe.As<byte, int>(ref intBytes[0]) = size;
+                            s.Write(intBytes);
+                            s.Write(bytes, 0, size);
                         }
-                        else
+                        finally
                         {
-                            var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
-                            var bytes = arrayPool.Rent(byteCount);
-                            try
-                            {
-                                var size = Encoding.Unicode.GetBytes(current.Data, bytes);
-                                Unsafe.As<byte, int>(ref intBytes[0]) = size;
-                                s.Write(intBytes);
-                                s.Write(bytes, 0, size);
-                            }
-                            finally
-                            {
-                                arrayPool.Return(bytes);
-                            }
+                            arrayPool.Return(bytes);
                         }
                     }
-                    while (current.Next != null);
+                }
+                while (current.Next != null);
 
-                    //write comma between packages and links
-                    s.Write(NullReferenceBytes);
+                //write comma between packages and links
+                s.Write(NullReferenceBytes);
 
-                    globalLinkId = -1;
-                    //write links
-                    current = null;
-                    do
+                globalLinkId = -1;
+                //write links
+                current = null;
+                do
+                {
+                    globalLinkId++;
+                    if (current == null)
                     {
-                        globalLinkId++;
-                        if (current == null)
-                        {
-                            current = head;
-                        }
-                        else
-                        {
-                            current = current.Next;
-                        }
-
-                        if (current.Random == null)
-                        {
-                            s.Write(NullReferenceBytes);
-                            continue;
-                        }
-
-                        var randomLinkId = FindRealIdNode(current, globalLinkId);
-                        Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
-                        s.Write(intBytes);
+                        current = head;
                     }
-                    while (current.Next != null);
-                })
-                ;
+                    else
+                    {
+                        current = current.Next;
+                    }
+
+                    if (current.Random == null)
+                    {
+                        s.Write(NullReferenceBytes);
+                        continue;
+                    }
+
+                    var randomLinkId = FindRealIdNode(current, globalLinkId);
+                    Unsafe.As<byte, int>(ref intBytes[0]) = randomLinkId;
+                    s.Write(intBytes);
+                }
+                while (current.Next != null);
+            });
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int FindRealIdNode(ListNode node, int currentId )
         {
-            CancellationTokenSource ctsUpSeeker = new CancellationTokenSource();
-            var ctUpSeeker = ctsUpSeeker.Token;
-            CancellationTokenSource ctsDownSeeker = new CancellationTokenSource();
-            var ctDownSeeker = ctsDownSeeker.Token;
-
-            try
+            var currentLoopId = currentId;
+            ListNode current = null;
+            do
             {
-                var currentIdUp = currentId;
-                Task<int> upSeeker = Task.Factory.StartNew(() =>
+                if (current == null)
                 {
-                    ListNode current = null;
-                    do
-                    {
-                        ctUpSeeker.ThrowIfCancellationRequested();
-
-                        if (current == null)
-                        {
-                            current = node;
-                        }
-                        else
-                        {
-                            current = current.Previous;
-                            currentIdUp--;
-                        }
-
-                        if (!ReferenceEquals(node.Random, current))
-                            continue;
-
-                        ctsDownSeeker.Cancel();
-                        return currentIdUp;
-                    }
-                    while (current.Previous != null);
-
-                    return -1;
-                }, ctUpSeeker);
-
-                var currentIdDown = currentId;
-                Task<int> downSeeker = Task.Factory.StartNew(() =>
-                {
-                    ListNode current = null;
-                    do
-                    {
-                        ctDownSeeker.ThrowIfCancellationRequested();
-
-                        if (current == null)
-                        {
-                            current = node;
-                        }
-                        else
-                        {
-                            current = current.Next;
-                            currentIdDown++;
-                        }
-
-                        if (!ReferenceEquals(node.Random, current))
-                            continue;
-
-                        ctsUpSeeker.Cancel();
-                        return currentIdDown;
-                    }
-                    while (current.Next != null);
-
-                    return -1;
-                }, ctDownSeeker);
-
-                int result = -1;
-                try
-                {
-                    upSeeker.Wait();
-                    result = upSeeker.Result;
+                    current = node;
                 }
-                catch(OperationCanceledException)
+                else
                 {
-                    //ignore
-                }
-                catch (AggregateException agg)
-                {
-                    if(!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
-                        throw;
-
-                    //ignore
-                }
-                catch
-                {
-                    throw;
+                    current = current.Previous;
+                    currentLoopId--;
                 }
 
-                if (result != -1)
-                    return result;
+                if (!ReferenceEquals(node.Random, current))
+                    continue;
 
-                try
-                {
-                    downSeeker.Wait();
-                    result = downSeeker.Result;
-                }
-                catch (OperationCanceledException)
-                {
-                    //ignore
-                }
-                catch (AggregateException agg)
-                {
-                    if (!agg.InnerExceptions.Any(ex => ex is OperationCanceledException))
-                        throw;
-
-                    //ignore
-                }
-                catch
-                {
-                    throw;
-                }
-
-                return result;
+                return currentLoopId;
             }
-            finally
+            while (current.Previous != null);
+
+            currentLoopId = currentId;
+            current = null;
+            do
             {
-                ctsUpSeeker.Dispose();
-                ctsDownSeeker.Dispose();
+                if (current == null)
+                {
+                    current = node;
+                }
+                else
+                {
+                    current = current.Next;
+                    currentLoopId++;
+                }
+
+                if (!ReferenceEquals(node.Random, current))
+                    continue;
+
+                return currentLoopId;
             }
+            while (current.Next != null);
+
+            return -1;
         }
 
         /// <summary>
