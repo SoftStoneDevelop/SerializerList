@@ -12,8 +12,6 @@ namespace ListSerializer
 {
     public class ListSerializerV2 : IListSerializer
     {
-        private static readonly byte[] NullReferenceBytes = new byte[] { 255, 255, 255, 255 };
-
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -46,7 +44,7 @@ namespace ListSerializer
 
                     if (current.Data == null)
                     {
-                        s.Write(NullReferenceBytes);
+                        WriteNullRefferenceValue(in s);
                     }
                     else
                     {
@@ -68,7 +66,7 @@ namespace ListSerializer
                 while (current.Next != null);
 
                 //write comma between packages and links
-                s.Write(NullReferenceBytes);
+                WriteNullRefferenceValue(in s);
 
                 globalLinkId = -1;
                 //write links
@@ -87,7 +85,7 @@ namespace ListSerializer
 
                     if (current.Random == null)
                     {
-                        s.Write(NullReferenceBytes);
+                        WriteNullRefferenceValue(in s);
                         continue;
                     }
 
@@ -97,6 +95,15 @@ namespace ListSerializer
                 }
                 while (current.Next != null);
             });
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteNullRefferenceValue(in Stream s)
+        {
+            s.WriteByte(byte.MaxValue);
+            s.WriteByte(byte.MaxValue);
+            s.WriteByte(byte.MaxValue);
+            s.WriteByte(byte.MaxValue);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -153,74 +160,77 @@ namespace ListSerializer
         /// <exception cref="System.ArgumentException">Thrown when a stream has invalid data</exception>
         public Task<ListNode> Deserialize(Stream s)
         {
-            return Task<ListNode>.Factory.StartNew(() =>
+            return Task<ListNode>.Factory.StartNew(DeserializeInternal, s);
+        }
+
+        private ListNode DeserializeInternal(object obj)
+        {
+            var s = (Stream)obj;
+            s.Position = 0;
+            ListNode head = null;
+            Span<byte> bufferForInt32 = stackalloc byte[sizeof(int)];
+            var allUniqueNodes = new List<ListNode>();
+
+            ListNode current = null;
+            ListNode previous = null;
+            ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
+
+            while (s.Read(bufferForInt32) == bufferForInt32.Length)
             {
-                s.Position = 0;
-                ListNode head = null;
-                Span<byte> bufferForInt32 = stackalloc byte[sizeof(int)];
-                var allUniqueNodes = new List<ListNode>();
+                var linkId = BitConverter.ToInt32(bufferForInt32);
+                if (linkId == -1)//end unique nodes
+                    break;
 
-                ListNode current = null;
-                ListNode previous = null;
-                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
-
-                while (s.Read(bufferForInt32) == bufferForInt32.Length)
+                current = new ListNode();
+                allUniqueNodes.Add(current);
+                if (previous != null)
                 {
-                    var linkId = BitConverter.ToInt32(bufferForInt32);
-                    if(linkId == -1)//end unique nodes
-                        break;
-
-                    current = new ListNode();
-                    allUniqueNodes.Add(current);
-                    if (previous != null)
-                    {
-                        previous.Next = current;
-                        current.Previous = previous;
-                    }
-                    else
-                    {
-                        head = current;
-                    }
-
-                    if (s.Read(bufferForInt32) < bufferForInt32.Length)
-                    {
-                        throw new ArgumentException("Unexpected end of stream, expect four bytes");
-                    }
-
-                    var length = BitConverter.ToInt32(bufferForInt32);
-                    if (length != -1)
-                    {
-                        var bufferData = arrayPool.Rent(length);
-                        try
-                        {
-                            if (s.Read(bufferData, 0, length) < length)
-                            {
-                                throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
-                            }
-
-                            current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
-                        }
-                        finally
-                        {
-                            arrayPool.Return(bufferData);
-                        }
-                    }
-
-                    previous = current;
+                    previous.Next = current;
+                    current.Previous = previous;
+                }
+                else
+                {
+                    head = current;
                 }
 
-                int uniqueNodesIndex = 0;
-                while (s.Read(bufferForInt32) == bufferForInt32.Length)
+                if (s.Read(bufferForInt32) < bufferForInt32.Length)
                 {
-                    int linkIndex = BitConverter.ToInt32(bufferForInt32);
-                    if(linkIndex != -1)
-                        allUniqueNodes[uniqueNodesIndex].Random = allUniqueNodes[linkIndex];
-
-                    uniqueNodesIndex++;
+                    throw new ArgumentException("Unexpected end of stream, expect four bytes");
                 }
 
-                return head;
-            });
+                var length = BitConverter.ToInt32(bufferForInt32);
+                if (length != -1)
+                {
+                    var bufferData = arrayPool.Rent(length);
+                    try
+                    {
+                        if (s.Read(bufferData, 0, length) < length)
+                        {
+                            throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                        }
+
+                        current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
+                    }
+                    finally
+                    {
+                        arrayPool.Return(bufferData);
+                    }
+                }
+
+                previous = current;
+            }
+
+            int uniqueNodesIndex = 0;
+            while (s.Read(bufferForInt32) == bufferForInt32.Length)
+            {
+                int linkIndex = BitConverter.ToInt32(bufferForInt32);
+                if (linkIndex != -1)
+                    allUniqueNodes[uniqueNodesIndex].Random = allUniqueNodes[linkIndex];
+
+                uniqueNodesIndex++;
+            }
+
+            return head;
         }
 
         /// <summary>
@@ -228,17 +238,20 @@ namespace ListSerializer
         /// </summary>
         public Task<ListNode> DeepCopy(ListNode head)
         {
-            return Task<ListNode>.Factory.StartNew(() =>
+            return Task<ListNode>.Factory.StartNew(DeepCopyInternal, head);
+        }
+
+        private ListNode DeepCopyInternal(object obj)
+        {
+            var head = (ListNode)obj;
+            using (var stream = new MemoryStream())
             {
-                using (var stream = new MemoryStream())
-                {
-                    var taskSerialize = Serialize(head, stream);
-                    taskSerialize.Wait();
-                    var taskDeserialize = Deserialize(stream);
-                    taskDeserialize.Wait();
-                    return taskDeserialize.Result;
-                }
-            });
+                var taskSerialize = Serialize(head, stream);
+                taskSerialize.Wait();
+                var taskDeserialize = Deserialize(stream);
+                taskDeserialize.Wait();
+                return taskDeserialize.Result;
+            }
         }
     }
 }
