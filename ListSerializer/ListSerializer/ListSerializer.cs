@@ -26,6 +26,8 @@ namespace ListSerializer
 
                 //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
                 s.Position = 0;
+                s.Write(intBytes);//reserved for count all unique nodes
+
                 ListNode current = null;
                 do
                 {
@@ -75,6 +77,13 @@ namespace ListSerializer
                     }
                 }
                 while (current.Next != null);
+
+                //count all unique nodes
+                long tempPosition = s.Position;
+                s.Position = 0;
+                Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId;
+                s.Write(intBytes);
+                s.Position = tempPosition;
             });
         }
 
@@ -121,7 +130,12 @@ namespace ListSerializer
             s.Position = 0;
             ListNode head = null;
             Span<byte> bufferForInt32 = stackalloc byte[4];
-            var linkDictionary = new Dictionary<int, ListNode>();
+            if (s.Read(bufferForInt32) != bufferForInt32.Length)
+            {
+                throw new ArgumentException("Unexpected end of stream, expect four bytes");
+            }
+
+            var linkDictionary = new Dictionary<int, ListNode>(BitConverter.ToInt32(bufferForInt32));
             var listNeedSetRandom = new List<(int linkId, int randomLinkId)>();
 
             ListNode current = null;
@@ -195,10 +209,9 @@ namespace ListSerializer
 
             foreach (var item in listNeedSetRandom)
             {
-                var node = linkDictionary[item.linkId];
                 if (linkDictionary.TryGetValue(item.randomLinkId, out var findNodeRandom))
                 {
-                    node.Random = findNodeRandom;
+                    linkDictionary[item.linkId].Random = findNodeRandom;
                 }
                 else
                 {
