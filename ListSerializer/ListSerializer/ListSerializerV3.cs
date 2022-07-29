@@ -26,6 +26,8 @@ namespace ListSerializer
                 //package [linkBytes 4byte][length 4byte][data]
                 //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
                 s.Position = 0;
+                s.Write(intBytes);//reserved for count all unique nodes
+
                 ListNode current = null;
                 do
                 {
@@ -70,6 +72,13 @@ namespace ListSerializer
 
                 var uniqueNodesCount = globalLinkId;
                 globalLinkId = -1;
+                //write uniqueNodesCount
+                long tempPosition = s.Position;
+                s.Position = 0;
+                Unsafe.As<byte, int>(ref intBytes[0]) = uniqueNodesCount;
+                s.Write(intBytes);
+                s.Position = tempPosition;
+
                 //write links
                 current = null;
 
@@ -288,7 +297,13 @@ namespace ListSerializer
             s.Position = 0;
             ListNode head = null;
             Span<byte> bufferForInt32 = stackalloc byte[4];
-            var allUniqueNodes = new List<ListNode>();
+
+            if (s.Read(bufferForInt32) != bufferForInt32.Length)
+            {
+                throw new ArgumentException("Unexpected end of stream, expect four bytes");
+            }
+
+            var allUniqueNodes = new List<ListNode>(BitConverter.ToInt32(bufferForInt32));
 
             ListNode current = null;
             ListNode previous = null;
