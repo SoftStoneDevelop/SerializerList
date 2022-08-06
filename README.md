@@ -1,4 +1,4 @@
-Issue: Exist interface names of "IListSerializer". Implement him as fast low memory allocation as you can.
+Issue: Exist interface names of "IListSerializer". Implement it as quickly and with low memory allocation as possible.
 
 V1 Dictionary:
 
