@@ -50,13 +50,20 @@ namespace ListSerializer
                     }
                     else
                     {
-                        var byteCount = Encoding.Unicode.GetMaxByteCount(current.Data.Count());
-                        var bytes = arrayPool.Rent(byteCount);
+                        var size = current.Data.Length * sizeof(char);
+                        Unsafe.As<byte, int>(ref intBytes[0]) = size;
+                        s.Write(intBytes);
+                        var bytes = arrayPool.Rent(size);
                         try
                         {
-                            var size = Encoding.Unicode.GetBytes(current.Data, bytes);
-                            Unsafe.As<byte, int>(ref intBytes[0]) = size;
-                            s.Write(intBytes);
+                            unsafe
+                            {
+                                fixed (byte* pDest = &bytes[0])
+                                fixed (char* pSource = current.Data)
+                                {
+                                    Buffer.MemoryCopy(pSource, pDest, bytes.Length, size);
+                                }
+                            }
                             s.Write(bytes, 0, size);
                         }
                         finally
@@ -223,7 +230,15 @@ namespace ListSerializer
                             throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                         }
 
-                        current.Data = Encoding.Unicode.GetString(new Span<byte>(bufferData, 0, length));
+                        current.Data = new string(' ', length / sizeof(char));
+                        unsafe
+                        {
+                            fixed (byte* pSource = &bufferData[0])
+                            fixed (char* pDest = current.Data)
+                            {
+                                Buffer.MemoryCopy(pSource, pDest, length, length);
+                            }
+                        }
                     }
                     finally
                     {
