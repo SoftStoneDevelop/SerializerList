@@ -17,12 +17,12 @@ namespace ListSerializer
             return Task.Factory.StartNew(() =>
             {
                 var globalLinkId = 0;
-                var buffer = new byte[500];
+                Span<byte> buffer = stackalloc byte[500];
 
                 //package [linkBytes 4byte][length 4byte][data]
                 //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
                 s.Position = 0;
-                s.Write(buffer, 0, sizeof(int));//reserved for count all unique nodes
+                s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
 
                 ListNode current = null;
                 do
@@ -38,7 +38,7 @@ namespace ListSerializer
 
                     //write id unique Node
                     Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
-                    s.Write(buffer, 0, sizeof(int));
+                    s.Write(buffer.Slice(0, sizeof(int)));
 
                     if (current.Data == null)
                     {
@@ -48,7 +48,7 @@ namespace ListSerializer
                     {
                         var size = current.Data.Length * sizeof(char);
                         Unsafe.As<byte, int>(ref buffer[0]) = size;
-                        s.Write(buffer, 0, sizeof(int));
+                        s.Write(buffer.Slice(0, sizeof(int)));
 
                         int partDataSize = 0;
                         int offsetDestination = 0;
@@ -63,7 +63,7 @@ namespace ListSerializer
                                     Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
                                 }
                             }
-                            s.Write(buffer, 0, partDataSize);
+                            s.Write(buffer.Slice(0, partDataSize));
 
                             offsetDestination += partDataSize;
                             size -= partDataSize;
@@ -81,7 +81,7 @@ namespace ListSerializer
                 long tempPosition = s.Position;
                 s.Position = 0;
                 Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
-                s.Write(buffer, 0, sizeof(int));
+                s.Write(buffer.Slice(0, sizeof(int)));
                 s.Position = tempPosition;
 
                 //write links
@@ -119,10 +119,10 @@ namespace ListSerializer
 
                         var randomLinkId = FindRealIdNode(current, globalLinkId);
                         Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
-                        s.Write(buffer, 0, sizeof(int));
+                        s.Write(buffer.Slice(0, sizeof(int)));
 
                         Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-                        s.Write(buffer, 0, sizeof(int));
+                        s.Write(buffer.Slice(0, sizeof(int)));
                     }
                     while (current.Next != null);
                 }
@@ -155,13 +155,13 @@ namespace ListSerializer
 
                         if (currentThread < threadsCount)
                         {
-                            var task = FindLinks(current, itemsInPackage, globalLinkId, s, lockStream, buffer);
+                            var task = FindLinks(current, itemsInPackage, globalLinkId, s, lockStream);
                             tasksFindingLinks.Add(task);
                         }
                         else
                         {
                             var steps = uniqueNodesCount - (itemsInPackage * (currentThread - 1));
-                            var task = FindLinks(current, steps, globalLinkId, s, lockStream, buffer);
+                            var task = FindLinks(current, steps, globalLinkId, s, lockStream);
                             tasksFindingLinks.Add(task);
                         }
                         skeepCount = itemsInPackage;
@@ -186,12 +186,13 @@ namespace ListSerializer
             int steps,
             int currentId,
             Stream s,
-            object lockStream,
-            byte[] buffer
+            object lockStream
             )
         {
             return Task.Factory.StartNew(() =>
             {
+                Span<byte> buffer = stackalloc byte[sizeof(int)];
+
                 ListNode current = null;
                 int randomLinkId = -1;
                 do
@@ -210,10 +211,10 @@ namespace ListSerializer
                         lock(lockStream)
                         {
                             Unsafe.As<byte, int>(ref buffer[0]) = currentId;
-                            s.Write(buffer, 0, sizeof(int));
+                            s.Write(buffer.Slice(0, sizeof(int)));
 
                             Unsafe.As<byte, int>(ref buffer[0]) = -1;
-                            s.Write(buffer, 0, sizeof(int));
+                            s.Write(buffer.Slice(0, sizeof(int)));
                         }
                         
                         currentId++;
@@ -225,10 +226,10 @@ namespace ListSerializer
                     lock (lockStream)
                     {
                         Unsafe.As<byte, int>(ref buffer[0]) = currentId;
-                        s.Write(buffer, 0, sizeof(int));
+                        s.Write(buffer.Slice(0, sizeof(int)));
 
                         Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-                        s.Write(buffer, 0, sizeof(int));
+                        s.Write(buffer.Slice(0, sizeof(int)));
                     }
                     currentId++;
                     steps--;
