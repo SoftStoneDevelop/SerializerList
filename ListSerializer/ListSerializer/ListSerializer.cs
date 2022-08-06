@@ -1,11 +1,8 @@
 ﻿using Common;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace ListSerializer
@@ -21,12 +18,11 @@ namespace ListSerializer
             {
                 var dic = new Dictionary<ListNode, int>();
                 var globalLinkId = 0;
-                ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
-                Span<byte> intBytes = stackalloc byte[sizeof(int)];
+                Span<byte> buffer = stackalloc byte[500];
 
                 //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
                 s.Position = 0;
-                s.Write(intBytes);//reserved for count all unique nodes
+                s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
 
                 ListNode current = null;
                 do
@@ -41,8 +37,8 @@ namespace ListSerializer
                     }
 
                     var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
-                    Unsafe.As<byte, int>(ref intBytes[0]) = currentLinkId;
-                    s.Write(intBytes);
+                    Unsafe.As<byte, int>(ref buffer[0]) = currentLinkId;
+                    s.Write(buffer.Slice(0, sizeof(int)));
 
                     if (current.Data == null)
                     {
@@ -51,24 +47,26 @@ namespace ListSerializer
                     else
                     {
                         var size = current.Data.Length * sizeof(char);
-                        Unsafe.As<byte, int>(ref intBytes[0]) = size;
-                        s.Write(intBytes);
-                        var bytes = arrayPool.Rent(size);
-                        try
+                        Unsafe.As<byte, int>(ref buffer[0]) = size;
+                        s.Write(buffer.Slice(0, sizeof(int)));
+
+                        int partDataSize = 0;
+                        int offsetDestination = 0;
+                        while (size > 0)
                         {
+                            partDataSize = size > buffer.Length ? buffer.Length : size;
                             unsafe
                             {
-                                fixed(byte* pDest = &bytes[0])
-                                fixed(char* pSource = current.Data)
+                                fixed (byte* pDest = &buffer[0])
+                                fixed (char* pSource = current.Data)
                                 {
-                                    Buffer.MemoryCopy(pSource, pDest, bytes.Length, size);
+                                    Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
                                 }
                             }
-                            s.Write(bytes, 0, size);
-                        }
-                        finally
-                        {
-                            arrayPool.Return(bytes);
+                            s.Write(buffer.Slice(0, partDataSize));
+
+                            offsetDestination += partDataSize;
+                            size -= partDataSize;
                         }
                     }
 
@@ -79,8 +77,8 @@ namespace ListSerializer
                     else
                     {
                         var linkRandom = GetLinkId(in dic, in current.Random, ref globalLinkId);
-                        Unsafe.As<byte, int>(ref intBytes[0]) = linkRandom;
-                        s.Write(intBytes);
+                        Unsafe.As<byte, int>(ref buffer[0]) = linkRandom;
+                        s.Write(buffer.Slice(0, sizeof(int)));
                     }
                 }
                 while (current.Next != null);
@@ -88,8 +86,8 @@ namespace ListSerializer
                 //count all unique nodes
                 long tempPosition = s.Position;
                 s.Position = 0;
-                Unsafe.As<byte, int>(ref intBytes[0]) = globalLinkId;
-                s.Write(intBytes);
+                Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+                s.Write(buffer.Slice(0, sizeof(int)));
                 s.Position = tempPosition;
             });
         }
@@ -136,22 +134,21 @@ namespace ListSerializer
             var s = (Stream)obj;
             s.Position = 0;
             ListNode head = null;
-            Span<byte> bufferForInt32 = stackalloc byte[4];
-            if (s.Read(bufferForInt32) != bufferForInt32.Length)
+            Span<byte> buffer = stackalloc byte[500];
+            if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
             {
                 throw new ArgumentException("Unexpected end of stream, expect four bytes");
             }
 
-            var linkDictionary = new Dictionary<int, ListNode>(BitConverter.ToInt32(bufferForInt32));
+            var linkDictionary = new Dictionary<int, ListNode>(BitConverter.ToInt32(buffer.Slice(0, sizeof(int))));
             var listNeedSetRandom = new List<(int linkId, int randomLinkId)>();
 
             ListNode current = null;
             ListNode previous = null;
-            ArrayPool<byte> arrayPool = ArrayPool<byte>.Shared;
 
-            while (s.Read(bufferForInt32) == bufferForInt32.Length)
+            while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
-                var linkId = BitConverter.ToInt32(bufferForInt32);
+                var linkId = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
 
                 current = new ListNode();
                 if (previous != null)
@@ -169,44 +166,45 @@ namespace ListSerializer
                     linkDictionary.Add(linkId, current);
                 }
 
-                if (s.Read(bufferForInt32) < bufferForInt32.Length)
+                if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
                 {
                     throw new ArgumentException("not find length data in stream");
                 }
 
-                var length = BitConverter.ToInt32(bufferForInt32);
+                var length = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
                 if (length != -1)
                 {
-                    var bufferData = arrayPool.Rent(length);
-                    try
+                    int partDataSize = 0;
+                    int offsetDestination = 0;
+                    while (length > 0)
                     {
-                        if (s.Read(bufferData, 0, length) < length)
+                        partDataSize = length > buffer.Length ? buffer.Length : length;
+                        if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
                         {
                             throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                         }
 
-                        current.Data = new string(' ', length/sizeof(char));
+                        current.Data = new string(' ', length / sizeof(char));
                         unsafe
                         {
-                            fixed (byte* pSource = &bufferData[0])
+                            fixed (byte* pSource = &buffer[0])
                             fixed (char* pDest = current.Data)
                             {
-                                Buffer.MemoryCopy(pSource, pDest, length, length);
+                                Buffer.MemoryCopy(pSource, pDest + offsetDestination, length, partDataSize);
                             }
                         }
-                    }
-                    finally
-                    {
-                        arrayPool.Return(bufferData);
+
+                        offsetDestination += partDataSize;
+                        length -= partDataSize;
                     }
                 }
 
-                if (s.Read(bufferForInt32) < bufferForInt32.Length)
+                if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
                 {
                     throw new ArgumentException();
                 }
 
-                var randomLink = BitConverter.ToInt32(bufferForInt32);
+                var randomLink = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
                 if (randomLink != -1)//means not null
                 {
                     if (linkDictionary.TryGetValue(randomLink, out var findNode))
