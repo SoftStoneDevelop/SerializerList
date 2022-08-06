@@ -52,21 +52,21 @@ namespace ListSerializer
 
                         int partDataSize = 0;
                         int offsetDestination = 0;
-                        while (size > 0)
+                        unsafe
                         {
-                            partDataSize = size > buffer.Length ? buffer.Length : size;
-                            unsafe
+                            fixed (byte* pDest = &buffer[0])
+                            fixed (char* pSource = current.Data)
                             {
-                                fixed (byte* pDest = &buffer[0])
-                                fixed (char* pSource = current.Data)
+                                while (size > 0)
                                 {
+                                    partDataSize = size > buffer.Length ? buffer.Length : size;
                                     Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
+                                    s.Write(buffer.Slice(0, partDataSize));
+
+                                    offsetDestination += partDataSize;
+                                    size -= partDataSize;
                                 }
                             }
-                            s.Write(buffer.Slice(0, partDataSize));
-
-                            offsetDestination += partDataSize;
-                            size -= partDataSize;
                         }
                     }
                 }
