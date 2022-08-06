@@ -191,7 +191,8 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
             {
-                Span<byte> buffer = stackalloc byte[sizeof(int)];
+                Span<byte> buffer = stackalloc byte[sizeof(int) * 2 * 10];
+                byte bufferOffset = 0;
 
                 ListNode current = null;
                 int randomLinkId = -1;
@@ -208,13 +209,17 @@ namespace ListSerializer
 
                     if (current.Random == null)
                     {
-                        lock(lockStream)
-                        {
-                            Unsafe.As<byte, int>(ref buffer[0]) = currentId;
-                            s.Write(buffer.Slice(0, sizeof(int)));
+                        Unsafe.As<byte, int>(ref buffer[bufferOffset]) = currentId;
+                        Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = -1;
+                        bufferOffset += sizeof(int) * 2;
 
-                            Unsafe.As<byte, int>(ref buffer[0]) = -1;
-                            s.Write(buffer.Slice(0, sizeof(int)));
+                        if(bufferOffset == buffer.Length)
+                        {
+                            bufferOffset = 0;
+                            lock (lockStream)
+                            {
+                                s.Write(buffer);
+                            }
                         }
                         
                         currentId++;
@@ -222,26 +227,40 @@ namespace ListSerializer
                         continue;
                     }
 
-                    randomLinkId = FindRealIdNode(current, currentId);
-                    lock (lockStream)
-                    {
-                        Unsafe.As<byte, int>(ref buffer[0]) = currentId;
-                        s.Write(buffer.Slice(0, sizeof(int)));
+                    randomLinkId = FindRealIdNode(in current, in currentId);
 
-                        Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-                        s.Write(buffer.Slice(0, sizeof(int)));
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = currentId;
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = randomLinkId;
+                    bufferOffset += sizeof(int) * 2;
+
+                    if (bufferOffset == buffer.Length)
+                    {
+                        bufferOffset = 0;
+                        lock (lockStream)
+                        {
+                            s.Write(buffer);
+                        }
                     }
+                    
                     currentId++;
                     steps--;
                 }
                 while (steps > 0);
+
+                if (bufferOffset != 0)
+                {
+                    lock (lockStream)
+                    {
+                        s.Write(buffer.Slice(0, bufferOffset));
+                    }
+                }
 
                 return true;
             });
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(ListNode node, int currentId)
+        private int FindRealIdNode(in ListNode node, in int currentId)
         {
             var currentLoopId = currentId;
             ListNode current = null;
@@ -342,26 +361,27 @@ namespace ListSerializer
                 {
                     int partDataSize = 0;
                     int offsetDestination = 0;
-                    while(length > 0)
-                    {
-                        partDataSize = length > buffer.Length ? buffer.Length : length;
-                        if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
-                        {
-                            throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
-                        }
+                    current.Data = new string(' ', length / sizeof(char));
 
-                        current.Data = new string(' ', length / sizeof(char));
-                        unsafe
+                    unsafe
+                    {
+                        fixed (byte* pSource = &buffer[0])
+                        fixed (char* pDest = current.Data)
                         {
-                            fixed (byte* pSource = &buffer[0])
-                            fixed (char* pDest = current.Data)
+                            while (length > 0)
                             {
+                                partDataSize = length > buffer.Length ? buffer.Length : length;
+                                if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
+                                {
+                                    throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                                }
+
                                 Buffer.MemoryCopy(pSource, pDest + offsetDestination, length, partDataSize);
+
+                                offsetDestination += partDataSize;
+                                length -= partDataSize;
                             }
                         }
-
-                        offsetDestination += partDataSize;
-                        length -= partDataSize;
                     }
                 }
 
