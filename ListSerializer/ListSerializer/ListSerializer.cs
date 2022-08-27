@@ -16,80 +16,86 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
             {
-                var dic = new Dictionary<ListNode, int>();
-                var globalLinkId = 0;
-                Span<byte> buffer = stackalloc byte[500];
+                SerializeInternal(in head, in s);
+            });
+        }
 
-                //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
-                s.Position = 0;
-                s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+        [SkipLocalsInit]
+        private void SerializeInternal(in ListNode head, in Stream s)
+        {
+            var dic = new Dictionary<ListNode, int>();
+            var globalLinkId = 0;
+            Span<byte> buffer = stackalloc byte[500];
 
-                ListNode current = null;
-                do
+            //package [linkBytes 4byte][length 4byte][data][randomLink 4 byte or 0 if null]
+            s.Position = 0;
+            s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+
+            ListNode current = null;
+            do
+            {
+                if (current == null)
                 {
-                    if (current == null)
-                    {
-                        current = head;
-                    }
-                    else
-                    {
-                        current = current.Next;
-                    }
+                    current = head;
+                }
+                else
+                {
+                    current = current.Next;
+                }
 
-                    var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
-                    Unsafe.As<byte, int>(ref buffer[0]) = currentLinkId;
+                var currentLinkId = GetLinkId(in dic, in current, ref globalLinkId);
+                Unsafe.As<byte, int>(ref buffer[0]) = currentLinkId;
+                s.Write(buffer.Slice(0, sizeof(int)));
+
+                if (current.Data == null)
+                {
+                    WriteNullRefferenceValue(in s);
+                }
+                else
+                {
+                    var size = current.Data.Length * sizeof(char);
+                    Unsafe.As<byte, int>(ref buffer[0]) = size;
                     s.Write(buffer.Slice(0, sizeof(int)));
 
-                    if (current.Data == null)
+                    int partDataSize = 0;
+                    int offsetDestination = 0;
+                    unsafe
                     {
-                        WriteNullRefferenceValue(in s);
-                    }
-                    else
-                    {
-                        var size = current.Data.Length * sizeof(char);
-                        Unsafe.As<byte, int>(ref buffer[0]) = size;
-                        s.Write(buffer.Slice(0, sizeof(int)));
-
-                        int partDataSize = 0;
-                        int offsetDestination = 0;
-                        unsafe
+                        fixed (byte* pDest = &buffer[0])
+                        fixed (char* pSource = current.Data)
                         {
-                            fixed (byte* pDest = &buffer[0])
-                            fixed (char* pSource = current.Data)
+                            while (size > 0)
                             {
-                                while (size > 0)
-                                {
-                                    partDataSize = size > buffer.Length ? buffer.Length : size;
-                                    Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
-                                    s.Write(buffer.Slice(0, partDataSize));
+                                partDataSize = size > buffer.Length ? buffer.Length : size;
+                                Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
+                                s.Write(buffer.Slice(0, partDataSize));
 
-                                    offsetDestination += partDataSize;
-                                    size -= partDataSize;
-                                }
+                                offsetDestination += partDataSize;
+                                size -= partDataSize;
                             }
                         }
                     }
-
-                    if (current.Random == null)
-                    {
-                        WriteNullRefferenceValue(in s);
-                    }
-                    else
-                    {
-                        var linkRandom = GetLinkId(in dic, in current.Random, ref globalLinkId);
-                        Unsafe.As<byte, int>(ref buffer[0]) = linkRandom;
-                        s.Write(buffer.Slice(0, sizeof(int)));
-                    }
                 }
-                while (current.Next != null);
 
-                //count all unique nodes
-                long tempPosition = s.Position;
-                s.Position = 0;
-                Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
-                s.Write(buffer.Slice(0, sizeof(int)));
-                s.Position = tempPosition;
-            });
+                if (current.Random == null)
+                {
+                    WriteNullRefferenceValue(in s);
+                }
+                else
+                {
+                    var linkRandom = GetLinkId(in dic, in current.Random, ref globalLinkId);
+                    Unsafe.As<byte, int>(ref buffer[0]) = linkRandom;
+                    s.Write(buffer.Slice(0, sizeof(int)));
+                }
+            }
+            while (current.Next != null);
+
+            //count all unique nodes
+            long tempPosition = s.Position;
+            s.Position = 0;
+            Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+            s.Write(buffer.Slice(0, sizeof(int)));
+            s.Position = tempPosition;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -129,6 +135,7 @@ namespace ListSerializer
             return Task<ListNode>.Factory.StartNew(DeserializeInternal, s);
         }
 
+        [SkipLocalsInit]
         private ListNode DeserializeInternal(object obj)
         {
             var s = (Stream)obj;

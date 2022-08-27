@@ -16,17 +16,99 @@ namespace ListSerializer
         {
             return Task.Factory.StartNew(() =>
             {
-                var globalLinkId = 0;
-                Span<byte> buffer = stackalloc byte[500];
+                SerializeInternal(in head, s);
+            });
+        }
 
-                //package [linkBytes 4byte][length 4byte][data]
-                //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
-                s.Position = 0;
-                s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+        [SkipLocalsInit]
+        private void SerializeInternal(in ListNode head, Stream s)
+        {
+            var globalLinkId = 0;
+            Span<byte> buffer = stackalloc byte[500];
 
-                ListNode current = null;
+            //package [linkBytes 4byte][length 4byte][data]
+            //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
+            s.Position = 0;
+            s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+
+            ListNode current = null;
+            do
+            {
+                if (current == null)
+                {
+                    current = head;
+                }
+                else
+                {
+                    current = current.Next;
+                }
+
+                //write id unique Node
+                Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
+                s.Write(buffer.Slice(0, sizeof(int)));
+
+                if (current.Data == null)
+                {
+                    WriteNullRefferenceValue(in s);
+                }
+                else
+                {
+                    var size = current.Data.Length * sizeof(char);
+                    Unsafe.As<byte, int>(ref buffer[0]) = size;
+                    s.Write(buffer.Slice(0, sizeof(int)));
+
+                    int partDataSize = 0;
+                    int offsetDestination = 0;
+                    unsafe
+                    {
+                        fixed (byte* pDest = &buffer[0])
+                        fixed (char* pSource = current.Data)
+                        {
+                            while (size > 0)
+                            {
+                                partDataSize = size > buffer.Length ? buffer.Length : size;
+                                Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
+                                s.Write(buffer.Slice(0, partDataSize));
+
+                                offsetDestination += partDataSize;
+                                size -= partDataSize;
+                            }
+                        }
+                    }
+                }
+            }
+            while (current.Next != null);
+
+            //write comma between packages and links
+            WriteNullRefferenceValue(in s);
+
+            var uniqueNodesCount = globalLinkId;
+            globalLinkId = -1;
+            //write uniqueNodesCount
+            long tempPosition = s.Position;
+            s.Position = 0;
+            Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
+            s.Write(buffer.Slice(0, sizeof(int)));
+            s.Position = tempPosition;
+
+            //write links
+            current = null;
+
+            int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
+            var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
+            var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
+
+            if (itemsInPackage < 500)
+            {
+                itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
+            }
+            var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+
+            if (threadsCount == 1)
+            {
                 do
                 {
+                    globalLinkId++;
                     if (current == null)
                     {
                         current = head;
@@ -36,72 +118,35 @@ namespace ListSerializer
                         current = current.Next;
                     }
 
-                    //write id unique Node
-                    Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
-                    s.Write(buffer.Slice(0, sizeof(int)));
-
-                    if (current.Data == null)
+                    if (current.Random == null)
                     {
                         WriteNullRefferenceValue(in s);
+                        continue;
                     }
-                    else
-                    {
-                        var size = current.Data.Length * sizeof(char);
-                        Unsafe.As<byte, int>(ref buffer[0]) = size;
-                        s.Write(buffer.Slice(0, sizeof(int)));
 
-                        int partDataSize = 0;
-                        int offsetDestination = 0;
-                        unsafe
-                        {
-                            fixed (byte* pDest = &buffer[0])
-                            fixed (char* pSource = current.Data)
-                            {
-                                while (size > 0)
-                                {
-                                    partDataSize = size > buffer.Length ? buffer.Length : size;
-                                    Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
-                                    s.Write(buffer.Slice(0, partDataSize));
+                    var randomLinkId = FindRealIdNode(current, globalLinkId);
+                    Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+                    s.Write(buffer.Slice(0, sizeof(int)));
 
-                                    offsetDestination += partDataSize;
-                                    size -= partDataSize;
-                                }
-                            }
-                        }
-                    }
+                    Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
+                    s.Write(buffer.Slice(0, sizeof(int)));
                 }
                 while (current.Next != null);
+            }
+            else
+            {
+                globalLinkId = 0;
+                current = head;
+                var tasksFindingLinks = new List<Task<bool>>(threadsCount);
+                var currentThread = 0;
+                var skeepCount = 0;
+                var lockStream = new object();
 
-                //write comma between packages and links
-                WriteNullRefferenceValue(in s);
-
-                var uniqueNodesCount = globalLinkId;
-                globalLinkId = -1;
-                //write uniqueNodesCount
-                long tempPosition = s.Position;
-                s.Position = 0;
-                Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
-                s.Write(buffer.Slice(0, sizeof(int)));
-                s.Position = tempPosition;
-
-                //write links
-                current = null;
-
-                int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
-                var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
-                var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
-
-                if (itemsInPackage < 500)
+                while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
                 {
-                    itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
-                }
-                var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
-
-                if (threadsCount == 1)
-                {
-                    do
+                    while (skeepCount > 0)
                     {
-                        globalLinkId++;
+                        skeepCount--;
                         if (current == null)
                         {
                             current = head;
@@ -110,66 +155,33 @@ namespace ListSerializer
                         {
                             current = current.Next;
                         }
-
-                        if (current.Random == null)
-                        {
-                            WriteNullRefferenceValue(in s);
-                            continue;
-                        }
-
-                        var randomLinkId = FindRealIdNode(current, globalLinkId);
-                        Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
-                        s.Write(buffer.Slice(0, sizeof(int)));
-
-                        Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-                        s.Write(buffer.Slice(0, sizeof(int)));
+                        globalLinkId++;
                     }
-                    while (current.Next != null);
-                }
-                else
-                {
-                    globalLinkId = 0;
-                    current = head;
-                    var tasksFindingLinks = new List<Task<bool>>(threadsCount);
-                    var currentThread = 0;
-                    var skeepCount = 0;
-                    var lockStream = new object();
 
-                    while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
+                    currentThread++;
+
+                    if (currentThread < threadsCount)
                     {
-                        while (skeepCount > 0)
-                        {
-                            skeepCount--;
-                            if (current == null)
-                            {
-                                current = head;
-                            }
-                            else
-                            {
-                                current = current.Next;
-                            }
-                            globalLinkId++;
-                        }
-
-                        currentThread++;
-
-                        if (currentThread < threadsCount)
-                        {
-                            var task = FindLinks(current, itemsInPackage, globalLinkId, s, lockStream);
-                            tasksFindingLinks.Add(task);
-                        }
-                        else
-                        {
-                            var steps = uniqueNodesCount - (itemsInPackage * (currentThread - 1));
-                            var task = FindLinks(current, steps, globalLinkId, s, lockStream);
-                            tasksFindingLinks.Add(task);
-                        }
-                        skeepCount = itemsInPackage;
+                        var parametrs = new FindLinksParam(current, itemsInPackage, globalLinkId, s, lockStream);
+                        tasksFindingLinks.Add(Task.Factory.StartNew(FindLinks, parametrs));
                     }
-
-                    Task.WaitAll(tasksFindingLinks.ToArray());
+                    else
+                    {
+                        var parametrs =
+                            new FindLinksParam(
+                                current,
+                                uniqueNodesCount - (itemsInPackage * (currentThread - 1)),
+                                globalLinkId,
+                                s,
+                                lockStream
+                                );
+                        tasksFindingLinks.Add(Task.Factory.StartNew(FindLinks, parametrs));
+                    }
+                    skeepCount = itemsInPackage;
                 }
-            });
+
+                Task.WaitAll(tasksFindingLinks.ToArray());
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -181,82 +193,100 @@ namespace ListSerializer
             s.WriteByte(byte.MaxValue);
         }
 
-        Task<bool> FindLinks(
-            ListNode node,
-            int steps,
-            int currentId,
-            Stream s,
-            object lockStream
-            )
+        [SkipLocalsInit]
+        private class FindLinksParam
         {
-            return Task.Factory.StartNew(() =>
+            public FindLinksParam(
+                ListNode node,
+                int steps,
+                int currentId,
+                Stream s,
+                object lockStream
+                )
             {
-                Span<byte> buffer = stackalloc byte[sizeof(int) * 2 * 10];
-                byte bufferOffset = 0;
+                Node = node;
+                Steps = steps;
+                CurrentId = currentId;
+                Stream = s;
+                LockStream = lockStream;
+            }
 
-                ListNode current = null;
-                int randomLinkId = -1;
-                do
+            public ListNode Node;
+            public int Steps;
+            public int CurrentId;
+            public Stream Stream;
+            public object LockStream;
+        }
+
+        [SkipLocalsInit]
+        bool FindLinks(object paramObj)
+        {
+            var param = (FindLinksParam)paramObj;
+            Span<byte> buffer = stackalloc byte[sizeof(int) * 2 * 10];
+            byte bufferOffset = 0;
+
+            ListNode current = null;
+            int randomLinkId = -1;
+            do
+            {
+                if (current == null)
                 {
-                    if (current == null)
-                    {
-                        current = node;
-                    }
-                    else
-                    {
-                        current = current.Next;
-                    }
+                    current = param.Node;
+                }
+                else
+                {
+                    current = current.Next;
+                }
 
-                    if (current.Random == null)
-                    {
-                        Unsafe.As<byte, int>(ref buffer[bufferOffset]) = currentId;
-                        Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = -1;
-                        bufferOffset += sizeof(int) * 2;
-
-                        if(bufferOffset == buffer.Length)
-                        {
-                            bufferOffset = 0;
-                            lock (lockStream)
-                            {
-                                s.Write(buffer);
-                            }
-                        }
-                        
-                        currentId++;
-                        steps--;
-                        continue;
-                    }
-
-                    randomLinkId = FindRealIdNode(in current, in currentId);
-
-                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = currentId;
-                    Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = randomLinkId;
+                if (current.Random == null)
+                {
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = -1;
                     bufferOffset += sizeof(int) * 2;
 
                     if (bufferOffset == buffer.Length)
                     {
                         bufferOffset = 0;
-                        lock (lockStream)
+                        lock (param.LockStream)
                         {
-                            s.Write(buffer);
+                            param.Stream.Write(buffer);
                         }
                     }
-                    
-                    currentId++;
-                    steps--;
-                }
-                while (steps > 0);
 
-                if (bufferOffset != 0)
+                    param.CurrentId++;
+                    param.Steps--;
+                    continue;
+                }
+
+                randomLinkId = FindRealIdNode(in current, in param.CurrentId);
+
+                Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = randomLinkId;
+                bufferOffset += sizeof(int) * 2;
+
+                if (bufferOffset == buffer.Length)
                 {
-                    lock (lockStream)
+                    bufferOffset = 0;
+                    lock (param.LockStream)
                     {
-                        s.Write(buffer.Slice(0, bufferOffset));
+                        param.Stream.Write(buffer);
                     }
                 }
 
-                return true;
-            });
+                param.CurrentId++;
+                param.Steps--;
+            }
+            while (param.Steps > 0);
+
+            if (bufferOffset != 0)
+            {
+                lock (param.LockStream)
+                {
+                    param.Stream.Write(buffer.Slice(0, bufferOffset));
+                }
+            }
+
+            return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -316,6 +346,7 @@ namespace ListSerializer
             return Task<ListNode>.Factory.StartNew(DeserializeInternal, s);
         }
 
+        [SkipLocalsInit]
         public ListNode DeserializeInternal(object obj)
         {
             var s = (Stream)obj;
