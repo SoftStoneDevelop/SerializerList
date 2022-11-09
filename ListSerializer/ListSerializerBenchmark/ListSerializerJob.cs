@@ -6,7 +6,7 @@ using ListSerializer;
 namespace ListSerializerBenchmark
 {
     [MemoryDiagnoser]
-    [SimpleJob(RuntimeMoniker.Net60)]
+    [SimpleJob(RuntimeMoniker.Net70)]
     public class ListSerializerJob
     {
         [Params(100, 1000, 10000, 100000, 250000, 500000, 1000000)]
