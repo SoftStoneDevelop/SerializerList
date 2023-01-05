@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ListSerializer
@@ -247,9 +248,33 @@ namespace ListSerializer
                     if (bufferOffset == buffer.Length)
                     {
                         bufferOffset = 0;
-                        lock (param.LockStream)
+
+                        int i = 0;
+                        while (true)
                         {
-                            param.Stream.Write(buffer);
+                            if (Monitor.TryEnter(param.LockStream))
+                            {
+                                try
+                                {
+                                    param.Stream.Write(buffer);
+                                    break;
+                                }
+                                finally
+                                {
+                                    Monitor.Exit(param.LockStream);
+                                }
+                            }
+                            else
+                            {
+                                if(i++ == 5000)
+                                {
+                                    lock (param.LockStream)
+                                    {
+                                        param.Stream.Write(buffer);
+                                    }
+                                    break;
+                                }
+                            }
                         }
                     }
 
@@ -267,9 +292,32 @@ namespace ListSerializer
                 if (bufferOffset == buffer.Length)
                 {
                     bufferOffset = 0;
-                    lock (param.LockStream)
+                    int i = 0;
+                    while (true)
                     {
-                        param.Stream.Write(buffer);
+                        if (Monitor.TryEnter(param.LockStream))
+                        {
+                            try
+                            {
+                                param.Stream.Write(buffer);
+                                break;
+                            }
+                            finally
+                            {
+                                Monitor.Exit(param.LockStream);
+                            }
+                        }
+                        else
+                        {
+                            if (i++ == 5000)
+                            {
+                                lock (param.LockStream)
+                                {
+                                    param.Stream.Write(buffer);
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -280,9 +328,32 @@ namespace ListSerializer
 
             if (bufferOffset != 0)
             {
-                lock (param.LockStream)
+                int i = 0;
+                while (true)
                 {
-                    param.Stream.Write(buffer.Slice(0, bufferOffset));
+                    if (Monitor.TryEnter(param.LockStream))
+                    {
+                        try
+                        {
+                            param.Stream.Write(buffer.Slice(0, bufferOffset));
+                            break;
+                        }
+                        finally
+                        {
+                            Monitor.Exit(param.LockStream);
+                        }
+                    }
+                    else
+                    {
+                        if (i++ == 5000)
+                        {
+                            lock (param.LockStream)
+                            {
+                                param.Stream.Write(buffer.Slice(0, bufferOffset));
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
