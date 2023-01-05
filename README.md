@@ -1,5 +1,7 @@
-Issue: Exist interface names of "IListSerializer". Implement it as quickly and with low memory allocation as possible.
+Given on assignment: Exist interface "IListSerializer" and class "ListNode".<br>
+Task: to implement "IListSerializer" with as efficient methods as possible and with minimal memory allocation.
 
+## Results:
 V1 Dictionary:
 
 |   Method |    Size |          Mean |    Allocated |
