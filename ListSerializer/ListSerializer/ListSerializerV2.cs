@@ -106,35 +106,14 @@ namespace ListSerializer
                 }
 
                 var randomLinkId = FindRealIdNode(in uniqueNodes, in item);
+                if(randomLinkId < 0)
+                {
+                    throw new ArgumentException("Algorithm error");
+                }
+
                 Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
                 s.Write(buffer.Slice(0, sizeof(int)));
             }
-        }
-
-        private void QuickSort(List<ListNode> nodes, int leftIndex, int rightIndex)
-        {
-            if(leftIndex < rightIndex)
-            {
-                var pivotIndex = Partition(nodes, leftIndex, rightIndex);
-                QuickSort(nodes, leftIndex, pivotIndex - 1);
-                QuickSort(nodes, pivotIndex + 1, rightIndex);
-            }
-        }
-
-        private int Partition(List<ListNode> nodes, int leftIndex, int rightIndex)
-        {
-            var pivot = nodes[rightIndex];
-            var i = leftIndex - 1;
-            for (int j = leftIndex; j < rightIndex - 1; j++)
-            {
-                if (nodes[j].Data.CompareTo(pivot.Data) <= 0)
-                {
-                    i++;
-                    nodes[i] = nodes[j];
-                }
-            }
-            nodes[i + 1] = nodes[rightIndex];
-            return i + 1;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
