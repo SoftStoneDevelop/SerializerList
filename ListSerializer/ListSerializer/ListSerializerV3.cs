@@ -97,15 +97,7 @@ namespace ListSerializer
 
             int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
             var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
-            var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
-
-            if (itemsInPackage < 500)
-            {
-                itemsInPackage = uniqueNodesCount < 500 ? uniqueNodesCount : 500;
-            }
-            var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
-
-            if (threadsCount == 1)
+            if (uniqueNodesCount <= 200)
             {
                 do
                 {
@@ -136,6 +128,9 @@ namespace ListSerializer
             }
             else
             {
+                var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
+                var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+
                 globalLinkId = 0;
                 current = head;
                 var tasksFindingLinks = new List<Task<bool>>(threadsCount);
