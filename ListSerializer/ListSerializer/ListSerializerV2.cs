@@ -1,6 +1,5 @@
 ﻿using Common;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -10,6 +9,8 @@ namespace ListSerializer
 {
     public class ListSerializerV2 : IListSerializer
     {
+        private static readonly int _sortLimit = 10000;
+
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -83,7 +84,10 @@ namespace ListSerializer
             }
             while (current.Next != null);
 
-            NodesExtensions.QuickSort(uniqueNodes);
+            if(uniqueNodes.Count > _sortLimit)
+            {
+                NodesExtensions.QuickSort(uniqueNodes);
+            }
 
             //count all unique nodes
             long tempPosition = s.Position;
@@ -105,7 +109,16 @@ namespace ListSerializer
                     continue;
                 }
 
-                var randomLinkId = FindRealIdNode(in uniqueNodes, in item);
+                int randomLinkId;
+                if(uniqueNodes.Count > _sortLimit)
+                {
+                    randomLinkId = FindRealIdNode(in uniqueNodes, in item);
+                }
+                else
+                {
+                    randomLinkId = EnumerationSearch(in uniqueNodes, in item);
+                }
+
                 if(randomLinkId < 0)
                 {
                     throw new ArgumentException("Algorithm error");
@@ -125,8 +138,22 @@ namespace ListSerializer
             s.WriteByte(byte.MaxValue);
         }
 
+        private int EnumerationSearch(in List<ListNode> uniqueNodes, in ListNode node)
+        {
+            for (int i = 0; i < uniqueNodes.Count; i++)
+            {
+                var currentNode = uniqueNodes[i];
+                if (ReferenceEquals(node.Random, currentNode))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(in List<ListNode> uniqueNodes, in ListNode node)//TODO find in sorted list
+        private int FindRealIdNode(in List<ListNode> uniqueNodes, in ListNode node)
         {
             //uniqueNodes must be sorted
             if (node.Random.Data == null)
@@ -292,7 +319,11 @@ namespace ListSerializer
                 previous = current;
             }
 
-            NodesExtensions.QuickSort(allUniqueNodes);
+            if (allUniqueNodes.Count > _sortLimit)
+            {
+                NodesExtensions.QuickSort(allUniqueNodes);
+            }
+
             int uniqueNodesIndex = 0;
             while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
