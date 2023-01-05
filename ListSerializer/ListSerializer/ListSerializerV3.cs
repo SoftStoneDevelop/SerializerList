@@ -5,11 +5,14 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using static ListSerializer.ListSerializerV2;
 
 namespace ListSerializer
 {
     public class ListSerializerV3 : IListSerializer
     {
+        private static readonly int _sortLimit = 10000;
+
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -31,6 +34,7 @@ namespace ListSerializer
             //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
             s.Position = 0;
             s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+            var uniqueNodes = new List<ListNode>();
 
             ListNode current = null;
             do
@@ -77,18 +81,24 @@ namespace ListSerializer
                         }
                     }
                 }
+
+                uniqueNodes.Add(current);
             }
             while (current.Next != null);
+
+            if (uniqueNodes.Count > _sortLimit)
+            {
+                NodesExtensions.QuickSort(uniqueNodes);
+            }
 
             //write comma between packages and links
             WriteNullRefferenceValue(in s);
 
-            var uniqueNodesCount = globalLinkId;
             globalLinkId = -1;
             //write uniqueNodesCount
             long tempPosition = s.Position;
             s.Position = 0;
-            Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
+            Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodes.Count;
             s.Write(buffer.Slice(0, sizeof(int)));
             s.Position = tempPosition;
 
@@ -97,39 +107,38 @@ namespace ListSerializer
 
             int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
             var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
-            if (uniqueNodesCount <= 200)
+            if (uniqueNodes.Count <= 200)
             {
-                do
+                for (int i = 0; i < uniqueNodes.Count; i++)
                 {
-                    globalLinkId++;
-                    if (current == null)
-                    {
-                        current = head;
-                    }
-                    else
-                    {
-                        current = current.Next;
-                    }
-
+                    current = uniqueNodes[i];
                     if (current.Random == null)
                     {
                         WriteNullRefferenceValue(in s);
                         continue;
                     }
 
-                    var randomLinkId = FindRealIdNode(current, globalLinkId);
-                    Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+                    int randomLinkId;
+                    if (uniqueNodes.Count > _sortLimit)
+                    {
+                        randomLinkId = FindRealIdNode(in uniqueNodes, in current);
+                    }
+                    else
+                    {
+                        randomLinkId = EnumerationSearch(in uniqueNodes, in current);
+                    }
+
+                    Unsafe.As<byte, int>(ref buffer[0]) = i;
                     s.Write(buffer.Slice(0, sizeof(int)));
 
                     Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
                     s.Write(buffer.Slice(0, sizeof(int)));
                 }
-                while (current.Next != null);
             }
             else
             {
-                var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
-                var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+                var itemsInPackage = ((int)(uniqueNodes.Count / logicalProcessors));
+                var threadsCount = (int)(uniqueNodes.Count / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodes.Count / itemsInPackage);
 
                 globalLinkId = 0;
                 current = head;
@@ -138,7 +147,7 @@ namespace ListSerializer
                 var skeepCount = 0;
                 var lockStream = new object();
 
-                while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
+                while ((globalLinkId < uniqueNodes.Count - 1) && currentThread < threadsCount)
                 {
                     while (skeepCount > 0)
                     {
@@ -158,15 +167,15 @@ namespace ListSerializer
 
                     if (currentThread < threadsCount)
                     {
-                        var parametrs = new FindLinksParam(current, itemsInPackage, globalLinkId, s, lockStream);
+                        var parametrs = new FindLinksParam(uniqueNodes, itemsInPackage, globalLinkId, s, lockStream);
                         tasksFindingLinks.Add(Task.Factory.StartNew(FindLinks, parametrs));
                     }
                     else
                     {
                         var parametrs =
                             new FindLinksParam(
-                                current,
-                                uniqueNodesCount - (itemsInPackage * (currentThread - 1)),
+                                uniqueNodes,
+                                uniqueNodes.Count - (itemsInPackage * (currentThread - 1)),
                                 globalLinkId,
                                 s,
                                 lockStream
@@ -193,21 +202,21 @@ namespace ListSerializer
         private class FindLinksParam
         {
             public FindLinksParam(
-                ListNode node,
+                List<ListNode> nodes,
                 int steps,
                 int currentId,
                 Stream s,
                 object lockStream
                 )
             {
-                Node = node;
+                Nodes = nodes;
                 Steps = steps;
                 CurrentId = currentId;
                 Stream = s;
                 LockStream = lockStream;
             }
 
-            public ListNode Node;
+            public List<ListNode> Nodes;
             public int Steps;
             public int CurrentId;
             public Stream Stream;
@@ -220,23 +229,14 @@ namespace ListSerializer
             var param = (FindLinksParam)paramObj;
             Span<byte> buffer = stackalloc byte[sizeof(int) * 2 * 10];
             byte bufferOffset = 0;
-
-            ListNode current = null;
             int randomLinkId = -1;
-            do
-            {
-                if (current == null)
-                {
-                    current = param.Node;
-                }
-                else
-                {
-                    current = current.Next;
-                }
 
+            for (int indx = param.CurrentId; indx < param.CurrentId + param.Steps; indx++)
+            {
+                var current = param.Nodes[indx];
                 if (current.Random == null)
                 {
-                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = indx;
                     Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = -1;
                     bufferOffset += sizeof(int) * 2;
 
@@ -261,7 +261,7 @@ namespace ListSerializer
                             }
                             else
                             {
-                                if(i++ == 5000)
+                                if (i++ == 5000)
                                 {
                                     lock (param.LockStream)
                                     {
@@ -273,14 +273,24 @@ namespace ListSerializer
                         }
                     }
 
-                    param.CurrentId++;
-                    param.Steps--;
                     continue;
                 }
 
-                randomLinkId = FindRealIdNode(in current, in param.CurrentId);
+                if (param.Nodes.Count > _sortLimit)
+                {
+                    randomLinkId = FindRealIdNode(in param.Nodes, in current);
+                }
+                else
+                {
+                    randomLinkId = EnumerationSearch(in param.Nodes, in current);
+                }
 
-                Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                if (randomLinkId < 0)
+                {
+                    throw new ArgumentException("Algorithm error");
+                }
+
+                Unsafe.As<byte, int>(ref buffer[bufferOffset]) = indx;
                 Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = randomLinkId;
                 bufferOffset += sizeof(int) * 2;
 
@@ -315,11 +325,7 @@ namespace ListSerializer
                         }
                     }
                 }
-
-                param.CurrentId++;
-                param.Steps--;
             }
-            while (param.Steps > 0);
 
             if (bufferOffset != 0)
             {
@@ -355,52 +361,91 @@ namespace ListSerializer
             return true;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(in ListNode node, in int currentId)
+        private int EnumerationSearch(in List<ListNode> uniqueNodes, in ListNode node)
         {
-            var currentLoopId = currentId;
-            ListNode current = null;
-            do
+            for (int i = 0; i < uniqueNodes.Count; i++)
             {
-                if (current == null)
+                var currentNode = uniqueNodes[i];
+                if (ReferenceEquals(node.Random, currentNode))
                 {
-                    current = node;
+                    return i;
                 }
-                else
-                {
-                    current = current.Previous;
-                    currentLoopId--;
-                }
-
-                if (!ReferenceEquals(node.Random, current))
-                    continue;
-
-                return currentLoopId;
             }
-            while (current.Previous != null);
-
-            currentLoopId = currentId;
-            current = null;
-            do
-            {
-                if (current == null)
-                {
-                    current = node;
-                }
-                else
-                {
-                    current = current.Next;
-                    currentLoopId++;
-                }
-
-                if (!ReferenceEquals(node.Random, current))
-                    continue;
-
-                return currentLoopId;
-            }
-            while (current.Next != null);
 
             return -1;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int FindRealIdNode(in List<ListNode> uniqueNodes, in ListNode node)
+        {
+            //uniqueNodes must be sorted
+            if (node.Random.Data == null)
+            {
+                for (int i = 0; i < uniqueNodes.Count; i++)
+                {
+                    var currentNode = uniqueNodes[i];
+                    if (currentNode.Data != null)
+                    {
+                        return -1;
+                    }
+
+                    if (ReferenceEquals(node.Random, currentNode))
+                    {
+                        return i;
+                    }
+                }
+
+                return -1;
+            }
+            else
+            {
+                var finded = uniqueNodes.BinarySearch(node, new ListNodeComparer());
+                if (finded < 0)
+                {
+                    return -1;
+                }
+
+                if (ReferenceEquals(uniqueNodes[finded], node.Random))
+                {
+                    return finded;
+                }
+
+                //search after
+                for (int i = finded; i < uniqueNodes.Count; i++)
+                {
+                    var current = uniqueNodes[i];
+                    if (current.Data == null || current.Data.CompareTo(node.Random.Data) > 0)
+                    {
+                        break;
+                    }
+
+                    if (ReferenceEquals(current, node.Random))
+                    {
+                        return i;
+                    }
+
+                    continue;
+                }
+
+                //search before
+                for (int i = finded; i >= 0; i--)
+                {
+                    var current = uniqueNodes[i];
+                    if (current.Data == null || current.Data.CompareTo(node.Random.Data) < 0)
+                    {
+                        break;
+                    }
+
+                    if (ReferenceEquals(current, node.Random))
+                    {
+                        return i;
+                    }
+
+                    continue;
+                }
+
+                return -1;
+            }
         }
 
         /// <summary>
@@ -483,6 +528,11 @@ namespace ListSerializer
                 }
 
                 previous = current;
+            }
+
+            if (allUniqueNodes.Count > _sortLimit)
+            {
+                NodesExtensions.QuickSort(allUniqueNodes);
             }
 
             while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))

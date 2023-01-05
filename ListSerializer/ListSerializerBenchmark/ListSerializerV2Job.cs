@@ -10,7 +10,7 @@ namespace ListSerializerBenchmark
     [HideColumns("Error", "StdDev", "Median", "Gen0", "Gen1", "Gen2", "Alloc Ratio", "RatioSD")]
     public class ListSerializerV2Job
     {
-        [Params(100, 1000, 10000, 100000)]
+        [Params(100, 1000, 10000, 100000, 250000, 350000)]
         public int Size;
 
         private ListNode _head;
