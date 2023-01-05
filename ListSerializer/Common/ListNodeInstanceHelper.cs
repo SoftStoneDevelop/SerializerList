@@ -20,12 +20,27 @@ namespace Common
 
             var listAllNodes = new List<ListNode>(depth) {head};
 
+            bool sameAsPrev = false;
+            int nullCount = 0;
             for (int i = 0; i < depth; i++)
             {
                 var next = new ListNode();
-                if (i%2 >0)
+                if (nullCount++ != 4)
                 {
-                    next.Data = $"Node № {i + 1}";
+                    if(sameAsPrev)
+                    {
+                        next.Data = $"Node № {i}";
+                        sameAsPrev = false;
+                    }
+                    else
+                    {
+                        next.Data = $"Node № {i + 1}";
+                        sameAsPrev = true;
+                    }
+                }
+                else
+                {
+                    nullCount = 0;
                 }
                 previus.Next = next;
                 next.Previous = previus;
