@@ -9,8 +9,6 @@ namespace ListSerializer
 {
     public class ListSerializerV2 : IListSerializer
     {
-        private static readonly int _sortLimit = 10000;
-
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -84,11 +82,6 @@ namespace ListSerializer
             }
             while (current.Next != null);
 
-            if(uniqueNodes.Count > _sortLimit)
-            {
-                NodesExtensions.QuickSort(uniqueNodes);
-            }
-
             //count all unique nodes
             long tempPosition = s.Position;
             s.Position = 0;
@@ -109,17 +102,8 @@ namespace ListSerializer
                     continue;
                 }
 
-                int randomLinkId;
-                if(uniqueNodes.Count > _sortLimit)
-                {
-                    randomLinkId = FindRealIdNode(in uniqueNodes, in item);
-                }
-                else
-                {
-                    randomLinkId = EnumerationSearch(in uniqueNodes, in item);
-                }
-
-                if(randomLinkId < 0)
+                int randomLinkId = EnumerationSearch(in uniqueNodes, in item);
+                if (randomLinkId < 0)
                 {
                     throw new ArgumentException("Algorithm error");
                 }
@@ -150,92 +134,6 @@ namespace ListSerializer
             }
 
             return -1;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(in List<ListNode> uniqueNodes, in ListNode node)
-        {
-            //uniqueNodes must be sorted
-            if (node.Random.Data == null)
-            {
-                for (int i = 0; i < uniqueNodes.Count; i++)
-                {
-                    var currentNode = uniqueNodes[i];
-                    if(currentNode.Data != null)
-                    {
-                        return -1;
-                    }
-
-                    if(ReferenceEquals(node.Random, currentNode))
-                    {
-                        return i;
-                    }
-                }
-
-                return -1;
-            }
-            else
-            {
-                var finded = uniqueNodes.BinarySearch(node, new ListNodeComparer());
-                if(finded < 0)
-                {
-                    return -1;
-                }
-
-                if (ReferenceEquals(uniqueNodes[finded], node.Random))
-                {
-                    return finded;
-                }
-
-                //search after
-                for (int i = finded; i < uniqueNodes.Count; i++)
-                {
-                    var current = uniqueNodes[i];
-                    if(current.Data == null || current.Data.CompareTo(node.Random.Data) > 0)
-                    {
-                        break;
-                    }
-
-                    if (ReferenceEquals(current, node.Random))
-                    {
-                        return i;
-                    }
-
-                    continue;
-                }
-
-                //search before
-                for (int i = finded; i >= 0; i--)
-                {
-                    var current = uniqueNodes[i];
-                    if (current.Data == null || current.Data.CompareTo(node.Random.Data) < 0)
-                    {
-                        break;
-                    }
-
-                    if (ReferenceEquals(current, node.Random))
-                    {
-                        return i;
-                    }
-
-                    continue;
-                }
-
-                return -1;
-            }
-        }
-
-        public class ListNodeComparer : IComparer<ListNode>
-        {
-            int IComparer<ListNode>.Compare(ListNode x, ListNode y)
-            {
-                if(x.Data == null)
-                {
-                    return -1;
-                }
-
-                return x.Data.CompareTo(y.Random.Data);
-            }
         }
 
         /// <summary>
@@ -317,11 +215,6 @@ namespace ListSerializer
                 }
 
                 previous = current;
-            }
-
-            if (allUniqueNodes.Count > _sortLimit)
-            {
-                NodesExtensions.QuickSort(allUniqueNodes);
             }
 
             int uniqueNodesIndex = 0;

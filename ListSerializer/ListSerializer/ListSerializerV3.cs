@@ -5,14 +5,11 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using static ListSerializer.ListSerializerV2;
 
 namespace ListSerializer
 {
     public class ListSerializerV3 : IListSerializer
     {
-        private static readonly int _sortLimit = 10000;
-
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream
         /// </summary>
@@ -86,11 +83,6 @@ namespace ListSerializer
             }
             while (current.Next != null);
 
-            if (uniqueNodes.Count > _sortLimit)
-            {
-                NodesExtensions.QuickSort(uniqueNodes);
-            }
-
             //write comma between packages and links
             WriteNullRefferenceValue(in s);
 
@@ -118,16 +110,7 @@ namespace ListSerializer
                         continue;
                     }
 
-                    int randomLinkId;
-                    if (uniqueNodes.Count > _sortLimit)
-                    {
-                        randomLinkId = FindRealIdNode(in uniqueNodes, in current);
-                    }
-                    else
-                    {
-                        randomLinkId = EnumerationSearch(in uniqueNodes, in current);
-                    }
-
+                    int randomLinkId = EnumerationSearch(in uniqueNodes, in current);
                     Unsafe.As<byte, int>(ref buffer[0]) = i;
                     s.Write(buffer.Slice(0, sizeof(int)));
 
@@ -276,15 +259,7 @@ namespace ListSerializer
                     continue;
                 }
 
-                if (param.Nodes.Count > _sortLimit)
-                {
-                    randomLinkId = FindRealIdNode(in param.Nodes, in current);
-                }
-                else
-                {
-                    randomLinkId = EnumerationSearch(in param.Nodes, in current);
-                }
-
+                randomLinkId = EnumerationSearch(in param.Nodes, in current);
                 if (randomLinkId < 0)
                 {
                     throw new ArgumentException("Algorithm error");
@@ -375,79 +350,6 @@ namespace ListSerializer
             return -1;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindRealIdNode(in List<ListNode> uniqueNodes, in ListNode node)
-        {
-            //uniqueNodes must be sorted
-            if (node.Random.Data == null)
-            {
-                for (int i = 0; i < uniqueNodes.Count; i++)
-                {
-                    var currentNode = uniqueNodes[i];
-                    if (currentNode.Data != null)
-                    {
-                        return -1;
-                    }
-
-                    if (ReferenceEquals(node.Random, currentNode))
-                    {
-                        return i;
-                    }
-                }
-
-                return -1;
-            }
-            else
-            {
-                var finded = uniqueNodes.BinarySearch(node, new ListNodeComparer());
-                if (finded < 0)
-                {
-                    return -1;
-                }
-
-                if (ReferenceEquals(uniqueNodes[finded], node.Random))
-                {
-                    return finded;
-                }
-
-                //search after
-                for (int i = finded; i < uniqueNodes.Count; i++)
-                {
-                    var current = uniqueNodes[i];
-                    if (current.Data == null || current.Data.CompareTo(node.Random.Data) > 0)
-                    {
-                        break;
-                    }
-
-                    if (ReferenceEquals(current, node.Random))
-                    {
-                        return i;
-                    }
-
-                    continue;
-                }
-
-                //search before
-                for (int i = finded; i >= 0; i--)
-                {
-                    var current = uniqueNodes[i];
-                    if (current.Data == null || current.Data.CompareTo(node.Random.Data) < 0)
-                    {
-                        break;
-                    }
-
-                    if (ReferenceEquals(current, node.Random))
-                    {
-                        return i;
-                    }
-
-                    continue;
-                }
-
-                return -1;
-            }
-        }
-
         /// <summary>
         /// Deserializes the list from the stream, returns the head node of the list
         /// </summary>
@@ -528,11 +430,6 @@ namespace ListSerializer
                 }
 
                 previous = current;
-            }
-
-            if (allUniqueNodes.Count > _sortLimit)
-            {
-                NodesExtensions.QuickSort(allUniqueNodes);
             }
 
             while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
