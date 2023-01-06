@@ -97,40 +97,39 @@ namespace ListSerializer
 
             int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
             var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
-            //if (uniqueNodesCount <= 200)
-            //{
-            //    do
-            //    {
-            //        globalLinkId++;
-            //        if (current == null)
-            //        {
-            //            current = head;
-            //        }
-            //        else
-            //        {
-            //            current = current.Next;
-            //        }
+            if (uniqueNodesCount <= 200)
+            {
+                do
+                {
+                    globalLinkId++;
+                    if (current == null)
+                    {
+                        current = head;
+                    }
+                    else
+                    {
+                        current = current.Next;
+                    }
 
-            //        if (current.Random == null)
-            //        {
-            //            WriteNullRefferenceValue(in s);
-            //            continue;
-            //        }
+                    if (current.Random == null)
+                    {
+                        WriteNullRefferenceValue(in s);
+                        continue;
+                    }
 
-            //        var randomLinkId = FindRealIdNode(in current, in head);
-            //        Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
-            //        s.Write(buffer.Slice(0, sizeof(int)));
+                    var randomLinkId = FindRealIdNode(in current, in head);
+                    Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+                    s.Write(buffer.Slice(0, sizeof(int)));
 
-            //        Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-            //        s.Write(buffer.Slice(0, sizeof(int)));
-            //    }
-            //    while (current.Next != null);
-            //}
-            //else
+                    Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
+                    s.Write(buffer.Slice(0, sizeof(int)));
+                }
+                while (current.Next != null);
+            }
+            else
             {
                 var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
-                //var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
-                var threadsCount = 1;
+                var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
 
                 globalLinkId = 0;
                 current = head;
