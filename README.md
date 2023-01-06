@@ -2,7 +2,7 @@ Given on assignment: Exist interface "IListSerializer" and class "ListNode".<br>
 Task: to implement "IListSerializer" with as efficient methods as possible and with minimal memory allocation.
 
 ## Results:
-V1 Dictionary:
+V1(fastest):
 
 |   Method |    Size |          Mean |    Allocated |
 |--------- |-------- |--------------:|-------------:|
@@ -14,7 +14,7 @@ V1 Dictionary:
 | **DeepCopy** |  **500000** | **299,268.48 μs** | **122877.36 KB** |
 | **DeepCopy** | **1000000** | **790,209.90 μs** | **249510.95 KB** |
 
-V2 List:
+V2(smallest by memory):
 
 |   Method |   Size |             Mean |   Allocated |
 |--------- |------- |-----------------:|------------:|
@@ -25,7 +25,7 @@ V2 List:
 | **DeepCopy** | **250000** | **15,806,007.91 μs** | **41576.67 KB** |
 | **DeepCopy** | **350000** | **31,161,903.55 μs** | **70494.11 KB** |
 
-V3 List parallelization:
+V3 (compromise):
 
 |   Method |   Size |            Mean |   Allocated |
 |--------- |------- |----------------:|------------:|
