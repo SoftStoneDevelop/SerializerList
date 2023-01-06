@@ -3,43 +3,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ListSerializer
 {
-    file class SerializeParametrs
-    {
-        public SerializeParametrs(
-            ListNode head,
-            Stream stream,
-            List<ListNode> allUniqueNodes
-            )
-        {
-            Stream = stream;
-            AllUniqueNodes = allUniqueNodes;
-            Head= head;
-        }
-
-        public ListNode Head;
-        public Stream Stream;
-        public List<ListNode> AllUniqueNodes;
-    }
-
-    file class DeserializeParams
-    {
-        public DeserializeParams(
-            Stream stream,
-            List<ListNode> allUniqueNodes
-            )
-        {
-            Stream = stream;
-            AllUniqueNodes = allUniqueNodes;
-        }
-
-        public Stream Stream;
-        public List<ListNode> AllUniqueNodes;
-    }
-
     public class ListSerializerV2 : IListSerializer
     {
         /// <summary>
@@ -47,35 +15,29 @@ namespace ListSerializer
         /// </summary>
         public Task Serialize(ListNode head, Stream s)
         {
-            return Task.Factory.StartNew(SerializeInternal, new SerializeParametrs(head, s, null));
+            return Task.Factory.StartNew(() =>
+            {
+                SerializeInternal(in head, s);
+            });
         }
 
         [SkipLocalsInit]
-        private void SerializeInternal(object obj)
+        private void SerializeInternal(in ListNode head, Stream s)
         {
-            var param = (SerializeParametrs)obj;
             var globalLinkId = 0;
             Span<byte> buffer = stackalloc byte[500];
 
             //package [linkBytes 4byte][length 4byte][data]
             //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
-            param.Stream.Position = 0;
-            param.Stream.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
-            if(param.AllUniqueNodes == null)
-            {
-                param.AllUniqueNodes = new List<ListNode>();
-            }
-            else
-            {
-                param.AllUniqueNodes.Clear();
-            }
+            s.Position = 0;
+            s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
 
             ListNode current = null;
             do
             {
                 if (current == null)
                 {
-                    current = param.Head;
+                    current = head;
                 }
                 else
                 {
@@ -84,17 +46,17 @@ namespace ListSerializer
 
                 //write id unique Node
                 Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
-                param.Stream.Write(buffer.Slice(0, sizeof(int)));
+                s.Write(buffer.Slice(0, sizeof(int)));
 
                 if (current.Data == null)
                 {
-                    WriteNullRefferenceValue(in param.Stream);
+                    WriteNullRefferenceValue(in s);
                 }
                 else
                 {
                     var size = current.Data.Length * sizeof(char);
                     Unsafe.As<byte, int>(ref buffer[0]) = size;
-                    param.Stream.Write(buffer.Slice(0, sizeof(int)));
+                    s.Write(buffer.Slice(0, sizeof(int)));
 
                     int partDataSize = 0;
                     int offsetDestination = 0;
@@ -107,7 +69,7 @@ namespace ListSerializer
                             {
                                 partDataSize = size > buffer.Length ? buffer.Length : size;
                                 Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
-                                param.Stream.Write(buffer.Slice(0, partDataSize));
+                                s.Write(buffer.Slice(0, partDataSize));
 
                                 offsetDestination += partDataSize;
                                 size -= partDataSize;
@@ -115,39 +77,108 @@ namespace ListSerializer
                         }
                     }
                 }
-
-                param.AllUniqueNodes.Add(current);
             }
             while (current.Next != null);
 
-            //count all unique nodes
-            long tempPosition = param.Stream.Position;
-            param.Stream.Position = 0;
-            Unsafe.As<byte, int>(ref buffer[0]) = param.AllUniqueNodes.Count;
-            param.Stream.Write(buffer.Slice(0, sizeof(int)));
-            param.Stream.Position = tempPosition;
-
             //write comma between packages and links
-            WriteNullRefferenceValue(in param.Stream);
+            WriteNullRefferenceValue(in s);
+
+            var uniqueNodesCount = globalLinkId;
+            globalLinkId = -1;
+            //write uniqueNodesCount
+            long tempPosition = s.Position;
+            s.Position = 0;
+            Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
+            s.Write(buffer.Slice(0, sizeof(int)));
+            s.Position = tempPosition;
 
             //write links
-            for (int i = 0; i < param.AllUniqueNodes.Count; i++)
+            current = null;
+
+            int tenPercent = (int)Math.Round(Environment.ProcessorCount * 0.1, 0);
+            var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
+            //if (uniqueNodesCount <= 200)
+            //{
+            //    do
+            //    {
+            //        globalLinkId++;
+            //        if (current == null)
+            //        {
+            //            current = head;
+            //        }
+            //        else
+            //        {
+            //            current = current.Next;
+            //        }
+
+            //        if (current.Random == null)
+            //        {
+            //            WriteNullRefferenceValue(in s);
+            //            continue;
+            //        }
+
+            //        var randomLinkId = FindRealIdNode(in current, in head);
+            //        Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId;
+            //        s.Write(buffer.Slice(0, sizeof(int)));
+
+            //        Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
+            //        s.Write(buffer.Slice(0, sizeof(int)));
+            //    }
+            //    while (current.Next != null);
+            //}
+            //else
             {
-                ListNode item = param.AllUniqueNodes[i];
-                if (item.Random == null)
+                var itemsInPackage = ((int)(uniqueNodesCount / logicalProcessors));
+                //var threadsCount = (int)(uniqueNodesCount / itemsInPackage) > logicalProcessors ? logicalProcessors : (int)(uniqueNodesCount / itemsInPackage);
+                var threadsCount = 1;
+
+                globalLinkId = 0;
+                current = head;
+                var tasksFindingLinks = new List<Task<bool>>(threadsCount);
+                var currentThread = 0;
+                var skeepCount = 0;
+                var lockStream = new object();
+
+                while ((globalLinkId < uniqueNodesCount - 1) && currentThread < threadsCount)
                 {
-                    WriteNullRefferenceValue(in param.Stream);
-                    continue;
+                    while (skeepCount > 0)
+                    {
+                        skeepCount--;
+                        if (current == null)
+                        {
+                            current = head;
+                        }
+                        else
+                        {
+                            current = current.Next;
+                        }
+                        globalLinkId++;
+                    }
+
+                    currentThread++;
+
+                    if (currentThread < threadsCount)
+                    {
+                        var parametrs = new FindLinksParam(current, head, itemsInPackage, globalLinkId, s, lockStream);
+                        tasksFindingLinks.Add(Task.Factory.StartNew(FindLinks, parametrs));
+                    }
+                    else
+                    {
+                        var parametrs =
+                            new FindLinksParam(
+                                current,
+                                head,
+                                uniqueNodesCount - (itemsInPackage * (currentThread - 1)),
+                                globalLinkId,
+                                s,
+                                lockStream
+                                );
+                        tasksFindingLinks.Add(Task.Factory.StartNew(FindLinks, parametrs));
+                    }
+                    skeepCount = itemsInPackage;
                 }
 
-                int randomLinkId = EnumerationSearch(in param.AllUniqueNodes, in item);
-                if (randomLinkId < 0)
-                {
-                    throw new ArgumentException("Algorithm error");
-                }
-
-                Unsafe.As<byte, int>(ref buffer[0]) = randomLinkId;
-                param.Stream.Write(buffer.Slice(0, sizeof(int)));
+                Task.WaitAll(tasksFindingLinks.ToArray());
             }
         }
 
@@ -160,16 +191,198 @@ namespace ListSerializer
             s.WriteByte(byte.MaxValue);
         }
 
-        private int EnumerationSearch(in List<ListNode> uniqueNodes, in ListNode node)
+        [SkipLocalsInit]
+        private class FindLinksParam
         {
-            for (int i = 0; i < uniqueNodes.Count; i++)
+            public FindLinksParam(
+                ListNode node,
+                ListNode head,
+                int steps,
+                int currentId,
+                Stream s,
+                object lockStream
+                )
             {
-                var currentNode = uniqueNodes[i];
-                if (ReferenceEquals(node.Random, currentNode))
+                Head = head;
+                Node = node;
+                Steps = steps;
+                CurrentId = currentId;
+                Stream = s;
+                LockStream = lockStream;
+            }
+
+            public ListNode Node;
+            public ListNode Head;
+            public int Steps;
+            public int CurrentId;
+            public Stream Stream;
+            public object LockStream;
+        }
+
+        [SkipLocalsInit]
+        bool FindLinks(object paramObj)
+        {
+            var param = (FindLinksParam)paramObj;
+            Span<byte> buffer = stackalloc byte[sizeof(int) * 2 * 10];
+            byte bufferOffset = 0;
+
+            ListNode current = null;
+            int randomLinkId = -1;
+            do
+            {
+                if (current == null)
                 {
-                    return i;
+                    current = param.Node;
+                }
+                else
+                {
+                    current = current.Next;
+                }
+
+                if (current.Random == null)
+                {
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                    Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = -1;
+                    bufferOffset += sizeof(int) * 2;
+
+                    if (bufferOffset == buffer.Length)
+                    {
+                        bufferOffset = 0;
+
+                        int i = 0;
+                        while (true)
+                        {
+                            if (Monitor.TryEnter(param.LockStream))
+                            {
+                                try
+                                {
+                                    param.Stream.Write(buffer);
+                                    break;
+                                }
+                                finally
+                                {
+                                    Monitor.Exit(param.LockStream);
+                                }
+                            }
+                            else
+                            {
+                                if (i++ == 5000)
+                                {
+                                    lock (param.LockStream)
+                                    {
+                                        param.Stream.Write(buffer);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    param.CurrentId++;
+                    param.Steps--;
+                    continue;
+                }
+
+                randomLinkId = FindRealIdNode(in current, in param.Head);
+
+                Unsafe.As<byte, int>(ref buffer[bufferOffset]) = param.CurrentId;
+                Unsafe.As<byte, int>(ref buffer[bufferOffset + sizeof(int)]) = randomLinkId;
+                bufferOffset += sizeof(int) * 2;
+
+                if (bufferOffset == buffer.Length)
+                {
+                    bufferOffset = 0;
+                    int i = 0;
+                    while (true)
+                    {
+                        if (Monitor.TryEnter(param.LockStream))
+                        {
+                            try
+                            {
+                                param.Stream.Write(buffer);
+                                break;
+                            }
+                            finally
+                            {
+                                Monitor.Exit(param.LockStream);
+                            }
+                        }
+                        else
+                        {
+                            if (i++ == 5000)
+                            {
+                                lock (param.LockStream)
+                                {
+                                    param.Stream.Write(buffer);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                param.CurrentId++;
+                param.Steps--;
+            }
+            while (param.Steps > 0);
+
+            if (bufferOffset != 0)
+            {
+                int i = 0;
+                while (true)
+                {
+                    if (Monitor.TryEnter(param.LockStream))
+                    {
+                        try
+                        {
+                            param.Stream.Write(buffer.Slice(0, bufferOffset));
+                            break;
+                        }
+                        finally
+                        {
+                            Monitor.Exit(param.LockStream);
+                        }
+                    }
+                    else
+                    {
+                        if (i++ == 5000)
+                        {
+                            lock (param.LockStream)
+                            {
+                                param.Stream.Write(buffer.Slice(0, bufferOffset));
+                            }
+                            break;
+                        }
+                    }
                 }
             }
+
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int FindRealIdNode(in ListNode node, in ListNode head)
+        {
+            int currentLoopId = 0;
+            ListNode current = null;
+            do
+            {
+                if (current == null)
+                {
+                    current = head;
+                }
+                else
+                {
+                    current = current.Next;
+                    currentLoopId++;
+                }
+
+                if (!ReferenceEquals(node.Random, current))
+                    continue;
+
+                return currentLoopId;
+            }
+            while (current.Next != null);
 
             return -1;
         }
@@ -180,56 +393,32 @@ namespace ListSerializer
         /// <exception cref="System.ArgumentException">Thrown when a stream has invalid data</exception>
         public Task<ListNode> Deserialize(Stream s)
         {
-            return Task<ListNode>.Factory.StartNew(DeserializeInternal, new DeserializeParams(s, null));
-        }
-
-        private class DeserializeParams
-        {
-            public DeserializeParams(
-                Stream stream,
-                List<ListNode> allUniqueNodes
-                )
-            {
-                Stream = stream;
-                AllUniqueNodes = allUniqueNodes;
-            }
-
-            public Stream Stream;
-            public List<ListNode> AllUniqueNodes;
+            return Task<ListNode>.Factory.StartNew(DeserializeInternal, s);
         }
 
         [SkipLocalsInit]
-        private ListNode DeserializeInternal(object obj)
+        public ListNode DeserializeInternal(object obj)
         {
-            var param = (DeserializeParams)obj;
-            param.Stream.Position = 0;
+            var s = (Stream)obj;
+            s.Position = 0;
             ListNode head = null;
-            Span<byte> buffer = stackalloc byte[500];
-            if (param.Stream.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
+            Span<byte> buffer = stackalloc byte[1000];
+
+            if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
             {
                 throw new ArgumentException("Unexpected end of stream, expect four bytes");
-            }
-
-            if(param.AllUniqueNodes == null)
-            {
-                param.AllUniqueNodes = new List<ListNode>(BitConverter.ToInt32(buffer.Slice(0, sizeof(int))));
-            }
-            else
-            {
-                param.AllUniqueNodes.Clear();
             }
 
             ListNode current = null;
             ListNode previous = null;
 
-            while (param.Stream.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
+            while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
                 var linkId = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
                 if (linkId == -1)//end unique nodes
                     break;
 
                 current = new ListNode();
-                param.AllUniqueNodes.Add(current);
                 if (previous != null)
                 {
                     previous.Next = current;
@@ -240,7 +429,7 @@ namespace ListSerializer
                     head = current;
                 }
 
-                if (param.Stream.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
+                if (s.Read(buffer.Slice(0, sizeof(int))) < sizeof(int))
                 {
                     throw new ArgumentException("Unexpected end of stream, expect four bytes");
                 }
@@ -260,7 +449,7 @@ namespace ListSerializer
                             while (length > 0)
                             {
                                 partDataSize = length > buffer.Length ? buffer.Length : length;
-                                if (param.Stream.Read(buffer.Slice(0, partDataSize)) != partDataSize)
+                                if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
                                 {
                                     throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                                 }
@@ -277,17 +466,45 @@ namespace ListSerializer
                 previous = current;
             }
 
-            int uniqueNodesIndex = 0;
-            while (param.Stream.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
+            while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
+                int index = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+
+                if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
+                    throw new ArgumentException("Unexpected end of stream, expect four bytes");
+
                 int linkIndex = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
                 if (linkIndex != -1)
-                    param.AllUniqueNodes[uniqueNodesIndex].Random = param.AllUniqueNodes[linkIndex];
-
-                uniqueNodesIndex++;
+                    GetByIndex(in head, index).Random = GetByIndex(in head, linkIndex);
             }
 
             return head;
+        }
+
+        private ListNode GetByIndex(in ListNode head, int index)
+        {
+            var currentIndx = 0;
+            ListNode current = null;
+            do
+            {
+                if (current == null)
+                {
+                    current = head;
+                }
+                else
+                {
+                    current = current.Next;
+                    currentIndx++;
+                }
+
+                if(currentIndx == index)
+                {
+                    return current;
+                }
+            }
+            while (current.Next != null);
+
+            throw new Exception("Out of range");
         }
 
         /// <summary>
@@ -303,10 +520,9 @@ namespace ListSerializer
             var head = (ListNode)obj;
             using (var stream = new MemoryStream())
             {
-                var nodes = new List<ListNode>();
-                var taskSerialize = Task.Factory.StartNew(SerializeInternal, new SerializeParametrs(head, stream, nodes));
+                var taskSerialize = Serialize(head, stream);
                 taskSerialize.Wait();
-                var taskDeserialize = Task<ListNode>.Factory.StartNew(DeserializeInternal, new DeserializeParams(stream, nodes));
+                var taskDeserialize = Deserialize(stream);
                 taskDeserialize.Wait();
                 return taskDeserialize.Result;
             }
