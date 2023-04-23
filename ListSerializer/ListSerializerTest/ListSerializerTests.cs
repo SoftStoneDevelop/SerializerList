@@ -11,7 +11,7 @@ namespace ListSerializerTest
         {
             var head = ListNodeInstanceHelper.CreateRandomListNode(5732);
 
-            var listSerializer = new ListSerializer.ListSerializer();
+            var listSerializer = new ListSerializer.ListSerializerV1();
             var copyTask = listSerializer.DeepCopy(head);
             copyTask.Wait();
 

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ListSerializer
 {
-    public class ListSerializer : IListSerializer
+    public class ListSerializerV1 : IListSerializer
     {
         /// <summary>
         /// Serializes all nodes in the list, including topology of the Random links, into stream

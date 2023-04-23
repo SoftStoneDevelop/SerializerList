@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -164,16 +165,17 @@ namespace ListSerializer
             var logicalProcessors = tenPercent > 2 ? Environment.ProcessorCount - tenPercent : Environment.ProcessorCount;
             if (param.AllUniqueNodes.Count <= 200)
             {
-                for (int i = 0; i < param.AllUniqueNodes.Count; i++)
+                var spanNodes = CollectionsMarshal.AsSpan(param.AllUniqueNodes);
+                for (int i = 0; i < spanNodes.Length; i++)
                 {
-                    current = param.AllUniqueNodes[i];
+                    current = spanNodes[i];
                     if (current.Random == null)
                     {
                         WriteNullRefferenceValue(in param.Stream);
                         continue;
                     }
 
-                    int randomLinkId = EnumerationSearch(in param.AllUniqueNodes, in current);
+                    int randomLinkId = EnumerationSearch(in spanNodes, in current);
                     Unsafe.As<byte, int>(ref buffer[0]) = i;
                     param.Stream.Write(buffer.Slice(0, sizeof(int)));
 
@@ -242,9 +244,10 @@ namespace ListSerializer
             byte bufferOffset = 0;
             int randomLinkId = -1;
 
+            var spanNodes = CollectionsMarshal.AsSpan(param.Nodes);
             for (int indx = param.CurrentId; indx < param.CurrentId + param.Steps; indx++)
             {
-                var current = param.Nodes[indx];
+                var current = spanNodes[indx];
                 if (current.Random == null)
                 {
                     Unsafe.As<byte, int>(ref buffer[bufferOffset]) = indx;
@@ -287,7 +290,7 @@ namespace ListSerializer
                     continue;
                 }
 
-                randomLinkId = EnumerationSearch(in param.Nodes, in current);
+                randomLinkId = EnumerationSearch(in spanNodes, in current);
                 if (randomLinkId < 0)
                 {
                     throw new ArgumentException("Algorithm error");
@@ -364,9 +367,9 @@ namespace ListSerializer
             return true;
         }
 
-        private int EnumerationSearch(in List<ListNode> uniqueNodes, in ListNode node)
+        private int EnumerationSearch(in Span<ListNode> uniqueNodes, in ListNode node)
         {
-            for (int i = 0; i < uniqueNodes.Count; i++)
+            for (int i = 0; i < uniqueNodes.Length; i++)
             {
                 var currentNode = uniqueNodes[i];
                 if (ReferenceEquals(node.Random, currentNode))
@@ -400,7 +403,7 @@ namespace ListSerializer
                 throw new ArgumentException("Unexpected end of stream, expect four bytes");
             }
 
-            if(param.AllUniqueNodes == null)
+            if (param.AllUniqueNodes == null)
             {
                 param.AllUniqueNodes = new List<ListNode>(BitConverter.ToInt32(buffer.Slice(0, sizeof(int))));
             }
@@ -467,6 +470,7 @@ namespace ListSerializer
                 previous = current;
             }
 
+            var nodesSpan = CollectionsMarshal.AsSpan(param.AllUniqueNodes);
             while (param.Stream.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
                 int index = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
@@ -476,7 +480,7 @@ namespace ListSerializer
 
                 int linkIndex = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
                 if (linkIndex != -1)
-                    param.AllUniqueNodes[index].Random = param.AllUniqueNodes[linkIndex];
+                    nodesSpan[index].Random = nodesSpan[linkIndex];
             }
 
             return head;
