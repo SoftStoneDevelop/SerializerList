@@ -2,35 +2,20 @@ Given on assignment: Exist interface "IListSerializer" and class "ListNode".<br>
 Task: to implement "IListSerializer" with as efficient methods as possible and with minimal memory allocation.
 
 ## Results:
-V1(fastest):<br>
-single thread algorithm
-|   Method |   Size |          Mean |    Allocated |
-|--------- |------- |--------------:|-------------:|
-| **DeepCopy** |    **100** |      **28.15 μs** |     **30.47 KB** |
-| **DeepCopy** |   **1000** |     **172.70 μs** |    **294.67 KB** |
-| **DeepCopy** |  **10000** |   **2,303.02 μs** |   **3192.76 KB** |
-| **DeepCopy** | **100000** |  **42,739.18 μs** |   **28879.3 KB** |
-| **DeepCopy** | **250000** | **131,159.76 μs** |  **64046.22 KB** |
-| **DeepCopy** | **350000** | **213,744.68 μs** | **112567.06 KB** |
-
-V2(smallest by memory):<br>
-multi thread algorithm
-
-|   Method |   Size |             Mean |  Allocated |
-|--------- |------- |-----------------:|-----------:|
-| **DeepCopy** |    **100** |         **37.29 μs** |   **16.34 KB** |
-| **DeepCopy** |   **1000** |      **2,015.70 μs** |  **160.79 KB** |
-| **DeepCopy** |  **10000** |    **194,372.64 μs** | **1880.56 KB** |
-| **DeepCopy** | **100000** | **19,058,509.61 μs** | **16648.1 KB** |
-
-V3 (compromise):<br>
-multi thread algorithm
-
-|   Method |   Size |            Mean |   Allocated |
-|--------- |------- |----------------:|------------:|
-| **DeepCopy** |    **100** |        **24.50 μs** |    **18.52 KB** |
-| **DeepCopy** |   **1000** |       **185.99 μs** |   **176.53 KB** |
-| **DeepCopy** |  **10000** |     **3,555.78 μs** |  **2136.36 KB** |
-| **DeepCopy** | **100000** |   **129,685.25 μs** |  **18693.2 KB** |
-| **DeepCopy** | **250000** |   **657,504.40 μs** |  **57976.4 KB** |
-| **DeepCopy** | **350000** | **1,269,452.50 μs** | **70509.81 KB** |
+|                                           Method |   Size |             Mean |  Ratio |   Allocated |
+|------------------------------------------------- |------- |-----------------:|-------:|------------:|
+|           **&#39;V1(fastest): single thread algorithm&#39;** |    **100** |         **28.61 μs** |   **1.00** |    **30.47 KB** |
+| &#39;V2(smallest by memory): multi thread algorithm&#39; |    100 |         35.46 μs |   1.24 |    16.34 KB |
+|       &#39;V3 (compromise): multi thread algorithm)&#39; |    100 |         21.93 μs |   0.77 |    18.52 KB |
+|                                                  |        |                  |        |             |
+|           **&#39;V1(fastest): single thread algorithm&#39;** |   **1000** |        **178.91 μs** |   **1.00** |   **286.65 KB** |
+| &#39;V2(smallest by memory): multi thread algorithm&#39; |   1000 |      2,000.95 μs |  11.18 |    160.8 KB |
+|       &#39;V3 (compromise): multi thread algorithm)&#39; |   1000 |        176.38 μs |   0.99 |   176.49 KB |
+|                                                  |        |                  |        |             |
+|           **&#39;V1(fastest): single thread algorithm&#39;** |  **10000** |      **2,396.95 μs** |   **1.00** |  **3192.76 KB** |
+| &#39;V2(smallest by memory): multi thread algorithm&#39; |  10000 |    195,788.66 μs |  81.70 |  1880.56 KB |
+|       &#39;V3 (compromise): multi thread algorithm)&#39; |  10000 |      2,627.84 μs |   1.10 |  2136.36 KB |
+|                                                  |        |                  |        |             |
+|           **&#39;V1(fastest): single thread algorithm&#39;** | **100000** |     **41,697.28 μs** |   **1.00** | **28879.64 KB** |
+| &#39;V2(smallest by memory): multi thread algorithm&#39; | 100000 | 19,041,807.83 μs | 456.71 | 16663.63 KB |
+|       &#39;V3 (compromise): multi thread algorithm)&#39; | 100000 |     74,338.23 μs |   1.79 | 18692.77 KB |
