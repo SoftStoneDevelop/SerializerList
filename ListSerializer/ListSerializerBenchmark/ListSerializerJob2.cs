@@ -8,7 +8,7 @@ namespace ListSerializerBenchmark
     [MemoryDiagnoser]
     [SimpleJob(RuntimeMoniker.Net70)]
     [HideColumns("Error", "StdDev", "Median", "Gen0", "Gen1", "Gen2", "Alloc Ratio", "RatioSD")]
-    public class ListSerializerJob
+    public class ListSerializerJob2
     {
         [Params(100, 500, 1000, 2500, 5000)]
         public int Size;
@@ -24,7 +24,7 @@ namespace ListSerializerBenchmark
             _serializer1 = new ListSerializer.ListSerializerV1();
             _serializer2 = new ListSerializer.ListSerializerV2();
             _serializer3 = new ListSerializer.ListSerializerV3();
-            _head = ListNodeInstanceHelper.CreateRandomListNode(Size);
+            _head = ListNodeInstanceHelper.CreateRandomListNode(Size, false);
         }
 
         [Benchmark(Baseline = true, Description = "V1: single thread algorithm on Dictionary and not check duplicate datas")]

@@ -25,15 +25,16 @@ namespace ListSerializer
         [SkipLocalsInit]
         private void SerializeInternal(in ListNode head, Stream s)
         {
-            var globalLinkId = 0;
             Span<byte> buffer = stackalloc byte[500];
 
             //package [linkBytes 4byte][length 4byte][data]
-            //All stream packages...link datas 'idLinkNodeHead'...'idLinkNodeTail'
+            //All stream packages...link 'datas'... 'idLinkNodeHead'...'idLinkNodeTail'
             s.Position = 0;
-            s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
+            s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique datas
 
+            var datas = new HashSet<string>();
             ListNode current = null;
+
             do
             {
                 if (current == null)
@@ -45,15 +46,11 @@ namespace ListSerializer
                     current = current.Next;
                 }
 
-                //write id unique Node
-                Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
-                s.Write(buffer.Slice(0, sizeof(int)));
-
                 if (current.Data == null)
                 {
-                    WriteNullRefferenceValue(in s);
+                    continue;
                 }
-                else
+                else if(datas.Add(current.Data))
                 {
                     var size = current.Data.Length * sizeof(char);
                     Unsafe.As<byte, int>(ref buffer[0]) = size;
@@ -81,17 +78,57 @@ namespace ListSerializer
             }
             while (current.Next != null);
 
+            //write comma between datas and packages
+            WriteNullRefferenceValue(in s);
+
+            //write uniqueDatasCount
+            long tempPosition = s.Position;
+            s.Position = 0;
+            Unsafe.As<byte, int>(ref buffer[0]) = datas.Count;
+            s.Write(buffer.Slice(0, sizeof(int)));
+            s.Position = tempPosition;
+
+            current = null;
+            var globalLinkId = 0;
+
+            do
+            {
+                if (current == null)
+                {
+                    current = head;
+                }
+                else
+                {
+                    current = current.Next;
+                }
+
+                //write id unique Node
+                Unsafe.As<byte, int>(ref buffer[0]) = globalLinkId++;
+                s.Write(buffer.Slice(0, sizeof(int)));
+
+                if (current.Data == null)
+                {
+                    WriteNullRefferenceValue(in s);
+                }
+                else
+                {
+                    var index = StringHashSetHelper.FindItemIndex(datas, current.Data);
+                    if(index == -1)
+                    {
+                        throw new Exception("Unknown string");
+                    }
+
+                    Unsafe.As<byte, int>(ref buffer[0]) = index;
+                    s.Write(buffer.Slice(0, sizeof(int)));
+                }
+            }
+            while (current.Next != null);
+
             //write comma between packages and links
             WriteNullRefferenceValue(in s);
 
             var uniqueNodesCount = globalLinkId;
             globalLinkId = -1;
-            //write uniqueNodesCount
-            long tempPosition = s.Position;
-            s.Position = 0;
-            Unsafe.As<byte, int>(ref buffer[0]) = uniqueNodesCount;
-            s.Write(buffer.Slice(0, sizeof(int)));
-            s.Position = tempPosition;
 
             //write links
             current = null;
@@ -400,7 +437,6 @@ namespace ListSerializer
         {
             var s = (Stream)obj;
             s.Position = 0;
-            ListNode head = null;
             Span<byte> buffer = stackalloc byte[1000];
 
             if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
@@ -408,6 +444,51 @@ namespace ListSerializer
                 throw new ArgumentException("Unexpected end of stream, expect four bytes");
             }
 
+            var datasCount = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+            var datas = new List<string>(datasCount);
+
+            for (int i = 0; i < datasCount; i++)
+            {
+                if(s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
+                {
+                    throw new ArgumentException("Unexpected end of stream, expect four bytes");
+                }
+
+                var length = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+                int partDataSize = 0;
+                int offsetDestination = 0;
+                var newStr = StringHelper.FastAllocateString(length / sizeof(char));
+
+                unsafe
+                {
+                    fixed (byte* pSource = &buffer[0])
+                    fixed (char* pDest = newStr)
+                    {
+                        while (length > 0)
+                        {
+                            partDataSize = length > buffer.Length ? buffer.Length : length;
+                            if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
+                            {
+                                throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                            }
+
+                            Buffer.MemoryCopy(pSource, pDest + (offsetDestination / sizeof(char)), length, partDataSize);
+
+                            offsetDestination += partDataSize;
+                            length -= partDataSize;
+                        }
+                    }
+                }
+
+                datas.Insert(i, newStr);
+            }
+
+            if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))//comma
+            {
+                throw new ArgumentException("Unexpected end of stream, expect four bytes");
+            }
+
+            ListNode head = null;
             ListNode current = null;
             ListNode previous = null;
 
@@ -433,38 +514,16 @@ namespace ListSerializer
                     throw new ArgumentException("Unexpected end of stream, expect four bytes");
                 }
 
-                var length = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
-                if (length != -1)
+                var dataIndex = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+                if (dataIndex != -1)
                 {
-                    int partDataSize = 0;
-                    int offsetDestination = 0;
-                    current.Data = StringHelper.FastAllocateString(length / sizeof(char));
-
-                    unsafe
-                    {
-                        fixed (byte* pSource = &buffer[0])
-                        fixed (char* pDest = current.Data)
-                        {
-                            while (length > 0)
-                            {
-                                partDataSize = length > buffer.Length ? buffer.Length : length;
-                                if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
-                                {
-                                    throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
-                                }
-
-                                Buffer.MemoryCopy(pSource, pDest + (offsetDestination / sizeof(char)), length, partDataSize);
-
-                                offsetDestination += partDataSize;
-                                length -= partDataSize;
-                            }
-                        }
-                    }
+                    current.Data = datas[dataIndex];
                 }
 
                 previous = current;
             }
 
+            //set random
             while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
                 int index = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
@@ -520,7 +579,8 @@ namespace ListSerializer
             using (var stream = new MemoryStream())
             {
                 SerializeInternal(head, stream);
-                return DeserializeInternal(stream);
+                return 
+                    DeserializeInternal(stream);
             }
         }
     }

@@ -10,7 +10,7 @@ namespace Common
         /// </summary>
         /// <param name="depth">depth created ListNode</param>
         /// <remarks>execution speed is not important: method for tests</remarks>
-        public static ListNode CreateRandomListNode(int depth)
+        public static ListNode CreateRandomListNode(int depth, bool withDuplicateDatas = true)
         {
             var head = new ListNode
             {
@@ -27,7 +27,7 @@ namespace Common
                 var next = new ListNode();
                 if (nullCount++ != 4)
                 {
-                    if(sameAsPrev)
+                    if (withDuplicateDatas && sameAsPrev)
                     {
                         next.Data = $"Node № {i}" + new string('Q', i);
                         sameAsPrev = false;
