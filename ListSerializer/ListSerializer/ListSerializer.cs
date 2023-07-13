@@ -1,4 +1,5 @@
 ﻿using Common;
+using ListSerializer.Helper;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -98,13 +99,12 @@ namespace ListSerializer
             s.Position = tempPosition;
         }
 
+        [SkipLocalsInit]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteNullRefferenceValue(in Stream s)
         {
-            s.WriteByte(byte.MaxValue);
-            s.WriteByte(byte.MaxValue);
-            s.WriteByte(byte.MaxValue);
-            s.WriteByte(byte.MaxValue);
+            Span<byte> nullRef = stackalloc byte[4] { byte.MaxValue, byte.MaxValue, byte.MaxValue, byte.MaxValue };
+            s.Write(nullRef);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -183,7 +183,7 @@ namespace ListSerializer
                 {
                     int partDataSize = 0;
                     int offsetDestination = 0;
-                    current.Data = new string(' ', length / sizeof(char));
+                    current.Data = StringHelper.FastAllocateString(length / sizeof(char));
 
                     unsafe
                     {
@@ -256,11 +256,8 @@ namespace ListSerializer
             var head = (ListNode)obj;
             using (var stream = new MemoryStream())
             {
-                var taskSerialize = Serialize(head, stream);
-                taskSerialize.Wait();
-                var taskDeserialize = Deserialize(stream);
-                taskDeserialize.Wait();
-                return taskDeserialize.Result;
+                SerializeInternal(head, stream);
+                return DeserializeInternal(stream);
             }
         }
     }
