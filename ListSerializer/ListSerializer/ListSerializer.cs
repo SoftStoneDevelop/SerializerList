@@ -32,6 +32,7 @@ namespace ListSerializer
             s.Position = 0;
             s.Write(buffer.Slice(0, sizeof(int)));//reserved for count all unique nodes
 
+            var datas = new HashSet<string>();
             ListNode current = null;
             do
             {
@@ -54,27 +55,46 @@ namespace ListSerializer
                 }
                 else
                 {
-                    var size = current.Data.Length * sizeof(char);
-                    Unsafe.As<byte, int>(ref buffer[0]) = size;
-                    s.Write(buffer.Slice(0, sizeof(int)));
+                    WriteZero(in s);
 
-                    int partDataSize = 0;
-                    int offsetDestination = 0;
-                    unsafe
+                    var added = datas.Add(current.Data);
+                    if(added)
                     {
-                        fixed (byte* pDest = &buffer[0])
-                        fixed (char* pSource = current.Data)
-                        {
-                            while (size > 0)
-                            {
-                                partDataSize = size > buffer.Length ? buffer.Length : size;
-                                Buffer.MemoryCopy(pSource + (offsetDestination / sizeof(char)), pDest, buffer.Length, partDataSize);
-                                s.Write(buffer.Slice(0, partDataSize));
+                        WriteNullRefferenceValue(in s);
 
-                                offsetDestination += partDataSize;
-                                size -= partDataSize;
+                        var size = current.Data.Length * sizeof(char);
+                        Unsafe.As<byte, int>(ref buffer[0]) = size;
+                        s.Write(buffer.Slice(0, sizeof(int)));
+
+                        int partDataSize = 0;
+                        int offsetDestination = 0;
+                        unsafe
+                        {
+                            fixed (byte* pDest = &buffer[0])
+                            fixed (char* pSource = current.Data)
+                            {
+                                while (size > 0)
+                                {
+                                    partDataSize = size > buffer.Length ? buffer.Length : size;
+                                    Buffer.MemoryCopy(pSource + (offsetDestination / sizeof(char)), pDest, buffer.Length, partDataSize);
+                                    s.Write(buffer.Slice(0, partDataSize));
+
+                                    offsetDestination += partDataSize;
+                                    size -= partDataSize;
+                                }
                             }
                         }
+                    }
+                    else
+                    {
+                        var index = StringHashSetHelper.FindItemIndex(datas, current.Data);
+                        if (index == -1)
+                        {
+                            throw new Exception("Unknown string");
+                        }
+
+                        Unsafe.As<byte, int>(ref buffer[0]) = index;
+                        s.Write(buffer.Slice(0, sizeof(int)));
                     }
                 }
 
@@ -104,6 +124,14 @@ namespace ListSerializer
         private void WriteNullRefferenceValue(in Stream s)
         {
             Span<byte> nullRef = stackalloc byte[4] { byte.MaxValue, byte.MaxValue, byte.MaxValue, byte.MaxValue };
+            s.Write(nullRef);
+        }
+
+        [SkipLocalsInit]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteZero(in Stream s)
+        {
+            Span<byte> nullRef = stackalloc byte[4] { 0, 0, 0, 0 };
             s.Write(nullRef);
         }
 
@@ -152,7 +180,7 @@ namespace ListSerializer
 
             ListNode current = null;
             ListNode previous = null;
-
+            var data = new List<string>();
             while (s.Read(buffer.Slice(0, sizeof(int))) == sizeof(int))
             {
                 var linkId = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
@@ -178,32 +206,53 @@ namespace ListSerializer
                     throw new ArgumentException("not find length data in stream");
                 }
 
-                var length = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
-                if (length != -1)
+                var haveData = BitConverter.ToInt32(buffer.Slice(0, sizeof(int))) != -1;
+                if (haveData)//have Data
                 {
-                    int partDataSize = 0;
-                    int offsetDestination = 0;
-                    current.Data = StringHelper.FastAllocateString(length / sizeof(char));
-
-                    unsafe
+                    if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
                     {
-                        fixed (byte* pSource = &buffer[0])
-                        fixed (char* pDest = current.Data)
+                        throw new ArgumentException("not find length data in stream");
+                    }
+
+                    var dataIndex = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+                    if (dataIndex == -1)//needLoadData
+                    {
+                        if (s.Read(buffer.Slice(0, sizeof(int))) != sizeof(int))
                         {
-                            while (length > 0)
+                            throw new ArgumentException("not find length data in stream");
+                        }
+
+                        var length = BitConverter.ToInt32(buffer.Slice(0, sizeof(int)));
+                        int partDataSize = 0;
+                        int offsetDestination = 0;
+                        current.Data = StringHelper.FastAllocateString(length / sizeof(char));
+
+                        unsafe
+                        {
+                            fixed (byte* pSource = &buffer[0])
+                            fixed (char* pDest = current.Data)
                             {
-                                partDataSize = length > buffer.Length ? buffer.Length : length;
-                                if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
+                                while (length > 0)
                                 {
-                                    throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                                    partDataSize = length > buffer.Length ? buffer.Length : length;
+                                    if (s.Read(buffer.Slice(0, partDataSize)) != partDataSize)
+                                    {
+                                        throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
+                                    }
+
+                                    Buffer.MemoryCopy(pSource, pDest + (offsetDestination / sizeof(char)), length, partDataSize);
+
+                                    offsetDestination += partDataSize;
+                                    length -= partDataSize;
                                 }
-
-                                Buffer.MemoryCopy(pSource, pDest + (offsetDestination / sizeof(char)), length, partDataSize);
-
-                                offsetDestination += partDataSize;
-                                length -= partDataSize;
                             }
                         }
+
+                        data.Add(current.Data);
+                    }
+                    else
+                    {
+                        current.Data = data[dataIndex];
                     }
                 }
 

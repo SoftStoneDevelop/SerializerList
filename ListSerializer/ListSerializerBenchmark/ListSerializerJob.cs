@@ -8,9 +8,10 @@ namespace ListSerializerBenchmark
     [MemoryDiagnoser]
     [SimpleJob(RuntimeMoniker.Net70)]
     [HideColumns("Error", "StdDev", "Median", "Gen0", "Gen1", "Gen2", "Alloc Ratio", "RatioSD")]
+    [ThreadingDiagnoser]
     public class ListSerializerJob
     {
-        [Params(100, 500, 1000, 2500, 5000)]
+        [Params(1000, 2500, 5000, 10000, 50000)]
         public int Size;
 
         private ListNode _head;
@@ -27,7 +28,7 @@ namespace ListSerializerBenchmark
             _head = ListNodeInstanceHelper.CreateRandomListNode(Size);
         }
 
-        [Benchmark(Baseline = true, Description = "V1: single thread algorithm on Dictionary and not check duplicate datas")]
+        [Benchmark(Baseline = true, Description = "V1: single thread algorithm on Dictionary")]
         public void DeepCopyV1()
         {
             var deepCopyTask = _serializer1.DeepCopy(_head);
