@@ -29,12 +29,12 @@ namespace Common
                 {
                     if(sameAsPrev)
                     {
-                        next.Data = $"Node № {i}";
+                        next.Data = $"Node № {i}" + new string('Q', i);
                         sameAsPrev = false;
                     }
                     else
                     {
-                        next.Data = $"Node № {i + 1}";
+                        next.Data = $"Node № {i + 1}" + new string('Q', i + 1);
                         sameAsPrev = true;
                     }
                 }

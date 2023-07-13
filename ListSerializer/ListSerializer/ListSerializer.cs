@@ -67,7 +67,7 @@ namespace ListSerializer
                             while (size > 0)
                             {
                                 partDataSize = size > buffer.Length ? buffer.Length : size;
-                                Buffer.MemoryCopy(pSource + offsetDestination, pDest, buffer.Length, partDataSize);
+                                Buffer.MemoryCopy(pSource + (offsetDestination / sizeof(char)), pDest, buffer.Length, partDataSize);
                                 s.Write(buffer.Slice(0, partDataSize));
 
                                 offsetDestination += partDataSize;
@@ -198,7 +198,7 @@ namespace ListSerializer
                                     throw new ArgumentException("Unexpected end of stream, expect bytes represent string data");
                                 }
 
-                                Buffer.MemoryCopy(pSource, pDest + offsetDestination, length, partDataSize);
+                                Buffer.MemoryCopy(pSource, pDest + (offsetDestination / sizeof(char)), length, partDataSize);
 
                                 offsetDestination += partDataSize;
                                 length -= partDataSize;
